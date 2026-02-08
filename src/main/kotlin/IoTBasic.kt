@@ -1,8 +1,7 @@
 package io.github.yoonseo6399
 
-import DeviceControlActivity
 data class Packet(val cmd : Int,val payload : List<Int>)
-fun rxParser(bArr: ByteArray): Packet? {
+fun uartRxParser(bArr: ByteArray): Packet? {
     // 1. 최소 길이 확인 (헤더 5 + 체크섬 2 = 7바이트는 최소한 있어야 함)
     if (bArr.size < 7) return null
 
@@ -45,7 +44,7 @@ fun rxParser(bArr: ByteArray): Packet? {
 
     return Packet(cmd,data)
 }
-
+/**
 fun rxAnalyzerPass1(bArr: ByteArray) {
     var i: Int
     val cArr = CharArray(20)
@@ -830,4 +829,4 @@ fun rxAnalyzerPass1(bArr: ByteArray) {
     } else {
         println("!!!!Rcv Data Err")
     }
-}
+}**/
