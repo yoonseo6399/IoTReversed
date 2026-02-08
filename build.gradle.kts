@@ -9,8 +9,12 @@ repositories {
     mavenCentral()
 }
 
+
 dependencies {
     testImplementation(kotlin("test"))
+    implementation("com.juul.kable:kable-core:0.42.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation(kotlin("reflect"))
 }
 
 tasks.test {

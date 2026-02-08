@@ -44,6 +44,7 @@ fun uartRxParser(bArr: ByteArray): Packet? {
 
     return Packet(cmd,data)
 }
+
 /**
 fun rxAnalyzerPass1(bArr: ByteArray) {
     var i: Int

@@ -77,7 +77,7 @@ sealed class Command(val byte: Byte, val description: String) {
     // --- 동적 조회를 위한 Companion Object ---
     companion object {
         private val allCommands: List<Command> by lazy {
-            this::class.
+            Command::class.nestedClasses.toMutableList().flatMap { it.nestedClasses }
         }
 
         fun fromByte(byte: Byte): Command? = allCommands.find { it.byte == byte }
