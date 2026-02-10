@@ -1,27 +1,185 @@
+@file:OptIn(ExperimentalUuidApi::class)
+
 package io.github.yoonseo6399.communication
 
 import com.juul.kable.Advertisement
+import com.juul.kable.Characteristic
 import com.juul.kable.Filter
+import com.juul.kable.NotConnectedException
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
-import com.juul.kable.peripheral
+import com.juul.kable.characteristicOf
+import com.juul.kable.toIdentifier
+import io.github.yoonseo6399.Command
 import io.github.yoonseo6399.Packet
+import io.github.yoonseo6399.PacketFetchBuilder
+import io.github.yoonseo6399.parsePowerValue
+import io.github.yoonseo6399.uartRxParser
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
-fun ACK(packet: Packet) {
+val registrationScope = CoroutineScope(Job() + CoroutineName("registrationScope") + Dispatchers.IO)
 
+val RX_SERVICE_UUID = Uuid.parse("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+val RX_CHAR_UUID = Uuid.parse("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+val TX_CHAR_UUID = Uuid.parse("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+val UUID_HEART_RATE_MEASUREMENT = Uuid.parse("00002a37-0000-1000-8000-00805f9b34fb");
+data class DeviceStatus(
+    val lampCount : Int,
+    val lampStatus : IntArray,
+    val concStatus : IntArray,
+    val concPowerUsage : IntArray,
+    val concCutStatus : IntArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as DeviceStatus
+
+        if (lampCount != other.lampCount) return false
+        if (!lampStatus.contentEquals(other.lampStatus)) return false
+        if (!concStatus.contentEquals(other.concStatus)) return false
+        if (!concPowerUsage.contentEquals(other.concPowerUsage)) return false
+        if (!concCutStatus.contentEquals(other.concCutStatus)) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = lampCount
+        result = 31 * result + lampStatus.contentHashCode()
+        result = 31 * result + concStatus.contentHashCode()
+        result = 31 * result + concPowerUsage.contentHashCode()
+        result = 31 * result + concCutStatus.contentHashCode()
+        return result
+    }
 }
-fun connect(mac : String) : CoroutineScope{
-    val scope = CoroutineScope(Job() + CoroutineName("DeviceConnection : $mac") + Dispatchers.IO)
-    Scanner {
-        filters {
-            match {
-                name = Filter.Name.Exact("Clio_UART")
-            }
+
+data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic,val packets : Flow<Packet>){
+//    suspend fun requestAllStatus() : DeviceStatus?{
+//        sendPacket(Packet.create(Command.Device.Status,1))
+//        //packets.collect { p -> ack(p).also { println(p.cmd.byte) } }
+//        val whatIsThis = waitForPacket(Command.Device.Status,false)
+//        val lampPacket = waitForPacket(Command.Lamp.State).payload.toMutableList()//.also { println(it.map { it.toInt() }) }
+//        val lampCount = lampPacket.first()
+//        val lampStatus = lampPacket.slice(1..4)
+//       // waitForPacket(Command.Lamp.State)
+//        val concStatus = waitForPacket(Command.Conc.State).payload
+//        val concPowerUsage = waitForPacket(Command.Conc.PowerState).payload
+//        val concCutStatus = waitForPacket(Command.Conc.CutState).payload
+//        sendPacket(Packet.create(Command.Power.Control,1))
+//        println("conc")
+//        //I DONT KNOW WHY BUY REQ-POWER_CONTROL's response is
+//        delay(1000)
+//        val concPowerValue = waitForPacket(Command.Power.State).payload.let { parsePowerValue(it) }.also { println(it) }
+//
+//        return null//return DeviceStatus(lampCount,lampStatus) //46107 packet is sus.. why send ctrl power?
+//    }
+    fun requestInfo(packet: Packet) = PacketFetchBuilder(this, packet)
+
+    suspend fun requestAllStatus(): DeviceStatus? {
+        // 사용 예시
+        val result = requestInfo(Packet.create(Command.Device.Status, 1))
+            .fetch(Command.Device.Status)
+            .fetch(Command.Lamp.State)
+            .fetch(Command.Conc.State)
+            .fetch(Command.Conc.PowerState)
+            .fetch(Command.Conc.CutState)
+            .retry(1.seconds, 5)
+            .setTimeout(8.seconds)
+            .execute()
+
+        if (result == null) {
+            println("통신 복구 실패: 데이터를 모두 가져오지 못했습니다.")
+            return null
+        }
+
+        // 결과 가공
+        val lampPacket = result[Command.Lamp.State]!!.payload
+        val lampCount = lampPacket.first()
+        val lampStatus = lampPacket.slice(1..4)
+        val concStatus = result[Command.Conc.State]!!.payload
+        val concPowerUsage = result[Command.Conc.PowerState]!!.payload
+        val concCutStatus = result[Command.Conc.CutState]!!.payload
+        val hi = concPowerUsage[3].toInt() and 0xFF
+        val lo = concPowerUsage[4].toInt() and 0xFF
+        val rawValue = (hi shl 8) or lo
+        val wattage = rawValue / 2.0  // 117 / 2.0 = 58.5W
+        println(concStatus.map { it.toInt() })
+        println(concPowerUsage.map { it.toInt() and 0xFF })
+        println("watts : $wattage W")
+        println(concCutStatus.map { it.toInt() })
+        return null
+    }
+    suspend inline fun waitForPacket(cmd : Command,ack : Boolean = true) : Packet {
+        println("wait for packet : $cmd")
+        val packet = packets.first { it.cmd.also { println(it) } == cmd }
+        if(ack) ack(packet)
+        println("Successfully Rcvd packet : $packet")
+        return packet
+    }
+    @OptIn(ExperimentalStdlibApi::class)
+    suspend inline fun sendPacket(packet: Packet) {
+        peripheral.write(rxCharacteristic,packet.serialize())
+    }
+
+    suspend fun ack(packet: Packet){
+        sendPacket(Packet.create(packet.cmd,1))
+    }
+}
+@OptIn(ExperimentalStdlibApi::class)
+suspend fun connect(uuid : String) : DeviceConnection?{
+    val scope = CoroutineScope(Job() + CoroutineName("DeviceConnection : $uuid") + Dispatchers.IO)
+    println("connecting...")
+    val peripheral = Peripheral(uuid.toIdentifier())
+    var connection : DeviceConnection? = null
+    try {
+        peripheral.connect()
+        peripheral.scope.launch {
+            val rxcharacteristic = characteristicOf(RX_SERVICE_UUID,RX_CHAR_UUID)
+            val txCharacteristic = characteristicOf(RX_SERVICE_UUID,TX_CHAR_UUID)
+            val observation = peripheral.observe(txCharacteristic)
+            val packet = observation.mapNotNull { uartRxParser(it) } //sus.. flow check needed
+            connection = DeviceConnection(peripheral,rxcharacteristic,txCharacteristic,packet)
+        }.join()
+    } catch (e : NotConnectedException){
+        println("device cannot be found")
+    }
+    println("connected!")
+    return connection
+}
+const val CMD2_REQ_SETTING : Byte = 126;
+
+
+
+fun register() : Deferred<Advertisement?> {
+    return registrationScope.async {
+        try {
+            withTimeout((10).seconds) {  Scanner {
+                filters {
+                    match {
+                        name = Filter.Name.Prefix("Clio_UART [Clio_UART.]")
+                    }
+                }
+            }.advertisements.first() }
+        } catch (e : TimeoutCancellationException){
+            null
         }
     }
-    return
 }

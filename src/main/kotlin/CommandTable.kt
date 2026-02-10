@@ -3,12 +3,13 @@ package io.github.yoonseo6399
 
 //그래서 tx 요청 -> Rx -> tx ( 나 데이터 받았어요 ) ㅇㅋ
 sealed class Command(val byte: Byte, val description: String) {
-
+    override fun equals(other: Any?): Boolean {
+        return other is Command && other.byte == byte
+    }
     // --- 전등 관련 ---
     sealed class Lamp(byte: Byte, description: String) : Command(byte, description) {
         object Control : Lamp(49, "전등 제어 요청")
         object State : Lamp(65, "전등 상태 요청")
-        object DetailControl : Lamp(65, "전등 제어 상세(CMD2)")
         object DetailState : Lamp(80, "전등 상태 상세(CMD2)")
     }
 
@@ -18,7 +19,6 @@ sealed class Command(val byte: Byte, val description: String) {
         object State : Conc(66, "콘센트 상태 요청")
         object PowerState : Conc(67, "콘센트 소비전력 요청")
         object CutState : Conc(68, "콘센트 대기전력차단 상태 요청")
-        object DetailControl : Conc(66, "콘센트 제어 상세(CMD2)")
         object DetailState : Conc(81, "콘센트 상태 상세(CMD2)")
     }
 
@@ -27,7 +27,6 @@ sealed class Command(val byte: Byte, val description: String) {
         object Control : Power(51, "일괄제어 요청")
         object State : Power(69, "일괄제어 상태 요청")
         object TotalPower : Power(125, "합산 소비전력 요청")
-        object DetailControl : Power(67, "일괄제어 상세(CMD2)")
         object DetailState : Power(84, "일괄제어 상태 상세(CMD2)")
     }
     // --- 기기/시스템 관련 ---
@@ -36,7 +35,7 @@ sealed class Command(val byte: Byte, val description: String) {
         object SetInfo : Device(53, "설정 정보 요청")
         object TimeInfo : Device(62, "시간 정보 요청")
         object Alive : Device(124, "생존 확인(ALIVE)")
-        object DetailStatus : Device(68, "기기 상태 상세(CMD2)")
+        //object DetailStatus : Device(68, "기기 상태 상세(CMD2)")
     }
 
     // --- 냉난방/온도 관련 ---
@@ -74,10 +73,14 @@ sealed class Command(val byte: Byte, val description: String) {
         object Setting : Mode(126, "기기 세팅(CMD2)")
     }
 
+    override fun toString(): String {
+        return "$byte($description)"
+    }
+
     // --- 동적 조회를 위한 Companion Object ---
     companion object {
         private val allCommands: List<Command> by lazy {
-            Command::class.nestedClasses.toMutableList().flatMap { it.nestedClasses }
+            Command::class.nestedClasses.toMutableList().flatMap { it.nestedClasses }.map { it.objectInstance as Command }
         }
 
         fun fromByte(byte: Byte): Command? = allCommands.find { it.byte == byte }

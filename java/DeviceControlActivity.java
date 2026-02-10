@@ -834,7 +834,7 @@ public class DeviceControlActivity extends AppCompatActivity {
                         }
                         Log.d(TAG, "lampCount=" + this.lampCount);
                         if (cArr[2] == 1) {
-                            enableDevTemp = true;
+                            enableDevTemp = true; //that's probably why we can't see them..
                         } else {
                             enableDevTemp = false;
                         }

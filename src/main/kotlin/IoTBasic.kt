@@ -1,6 +1,171 @@
 package io.github.yoonseo6399
 
-data class Packet(val cmd : Int,val payload : List<Int>)
+import io.github.yoonseo6399.communication.CMD2_REQ_SETTING
+import io.github.yoonseo6399.communication.DeviceConnection
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+data class Packet(val cmd : Command,val payload : ByteArray){
+    constructor(cmd: Command, payload: CharArray) : this(cmd,payload.map { it.code.toByte() }.toByteArray())
+    companion object {
+        fun create(cmd: Command, vararg payload: Byte) = Packet(cmd,payload)
+    }
+    // toByte sus....
+    fun serialize(len : Byte = payload.size.toByte()): ByteArray {
+        // 1. 20바이트 크기의 배열 생성 및 0으로 초기화
+        val bArr = ByteArray(20) { 0 }
+
+        // 2. 헤더 및 데이터 설정
+        bArr[0] = CMD2_REQ_SETTING // 이 상수는 기존에 정의된 값을 사용하세요
+        bArr[1] = 32
+        bArr[2] = 15
+        bArr[3] = cmd.byte
+        bArr[4] = len
+
+        // 3. 페이로드 데이터 복사 (b2만큼)
+        for (i in 0 until len.toInt()) {
+            try {
+                bArr[i + 5] = payload[i] // char를 byte로 변환
+            } catch (e: Exception) {
+                println("ERR: MakeTxFramePass: ${e.message}")
+                return bArr // 에러 시 현재까지 만든 배열 반환 (또는 예외 처리)
+            }
+        }
+
+        // 4. 체크섬 계산 (XOR 및 더하기)
+        var b3: Byte = 0 // Sum 체크섬
+        var b4: Byte = 0 // XOR 체크섬
+        val lastIndex = len.toInt() + 5
+
+        for (i in 0 until lastIndex) {
+            val currentByte = bArr[i]
+            b4 = (b4.toInt() xor currentByte.toInt()).toByte()
+            b3 = (b3 + currentByte).toByte()
+        }
+
+        // 5. 체크섬 기록
+        bArr[lastIndex] = b4
+        bArr[lastIndex + 1] = (b3 + b4).toByte()
+
+        return bArr
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as Packet
+
+        if (cmd != other.cmd) return false
+        if (!payload.contentEquals(other.payload)) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = cmd.hashCode()
+        result = 31 * result + payload.contentHashCode()
+        return result
+    }
+}
+
+class PacketFetchBuilder(
+    private val connection: DeviceConnection,
+    private val initialRequest: Packet
+) {
+    private val targetCommands = mutableMapOf<Command,Boolean>()
+    private var retryInterval = 1.seconds
+    private var maxRetries = 3
+    private var timeout = 2.seconds
+
+    fun fetch(cmd: Command,ack : Boolean = true) = apply { targetCommands.put(cmd,ack) }
+
+    fun retry(interval: Duration, count: Int) = apply {
+        retryInterval = interval
+        maxRetries = count
+    }
+
+    fun setTimeout(duration: Duration) = apply {
+        timeout = duration
+    }
+    /**warn this is not Async do not use it with other request**/
+    suspend fun execute(): Map<Command, Packet>? {
+        var currentRetry = 0
+
+        while (currentRetry <= maxRetries) {
+            val results = mutableMapOf<Command, Packet>()
+
+            try {
+                // 타임아웃 설정: 전체 fetch 과정이 너무 길어지면 끊음
+                withTimeout(timeout) {
+                    coroutineScope {
+                        // 1. 패킷 수집 시작 (요청 보내기 전부터 관찰 시작)
+                        val collectionJob = launch {
+                            connection.packets.collect { packet ->
+                                if (targetCommands.contains(packet.cmd)) {
+                                    results[packet.cmd] = packet
+                                    // ACK 전송 (기존 로직 유지)
+                                    if(targetCommands[packet.cmd] == true) connection.ack(packet)
+                                    // 모든 패킷을 다 모았다면 종료
+                                    if (results.keys.containsAll(targetCommands.keys)) {
+                                        cancel()
+                                    }
+                                }
+                            }
+                        }
+                        // 2. 초기 요청 전송
+                        connection.sendPacket(initialRequest)
+                        // 3. 수집 완료 대기
+                        collectionJob.join()
+                    }
+
+                }
+
+                // 성공적으로 모두 모았는지 확인
+                if (results.keys.containsAll(targetCommands.keys)) {
+                    return results
+                }
+            } catch (e: Exception) {
+                println("Fetch failed (attempt ${currentRetry + 1}): ${e.message}")
+                if (e is NoSuchElementException) {
+                    println("기기 상태 불일치 감지 - 재연결 시도")
+                    connection.peripheral.disconnect()
+                    connection.peripheral.connect() // 강제 재연결로 서비스 테이블 갱신
+                }
+            }
+
+            // 실패 시 재시도 전 대기
+            currentRetry++
+            if (currentRetry <= maxRetries) {
+                delay(retryInterval)
+                println("Retrying... $currentRetry")
+            }
+        }
+
+        return null // 끝내 실패한 경우
+    }
+}
+
+fun parsePowerValue(payload: ByteArray) : Int{
+    val rawHex = payload.take(8).joinToString("") { "%02x".format(it) }
+    println("Rx(CMD_REQ_STS_PWR): $rawHex")
+
+// Power Value 파싱
+    val p1 = (payload[4].toInt() shr 4) and 0x0F
+    val p2 = payload[4].toInt() and 0x0F
+    val p3 = (payload[5].toInt() shr 4) and 0x0F
+    val p4 = payload[5].toInt() and 0x0F
+
+    val strPowerVal = "%x%x%x%x".format(p1, p2, p3, p4)
+    return strPowerVal.toInt()
+}
+@OptIn(ExperimentalStdlibApi::class)
 fun uartRxParser(bArr: ByteArray): Packet? {
     // 1. 최소 길이 확인 (헤더 5 + 체크섬 2 = 7바이트는 최소한 있어야 함)
     if (bArr.size < 7) return null
@@ -9,7 +174,7 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     val header2 = bArr[1].toInt() and 0xFF
     val header3 = bArr[2].toInt() and 0xFF
     val dataLength = bArr[4].toInt() and 0xFF // b6 역할
-    val cmd = bArr[3].toInt() and 0xFF
+    val cmd = bArr[3]
 
     // 2. 헤더 조건 검사 (0x7E, 0x10, 0x0F)
     if (header1 != 0x7E || header2 != 0x10 || header3 != 0x0F) {
@@ -34,15 +199,14 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     val calculatedCombined = (addSum + xorSum) and 0xFF
 
     if (xorSum != receivedXor || calculatedCombined != receivedCombined) {
-        println("ERR: Checksum Mismatch")
+        println("ERR: Checksum Mismatch : ${bArr.toHexString()}")
         return null
     }
 
     // 5. 실제 데이터 추출 (5번 인덱스부터 dataLength 만큼)
     val data = bArr.sliceArray(5 until 5 + dataLength)
-        .map { it.toInt() and 0xFF }
 
-    return Packet(cmd,data)
+    return Command.fromByte(cmd)?.let { Packet(it,data) }
 }
 
 /**
