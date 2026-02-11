@@ -1,4 +1,4 @@
-package io.github.yoonseo6399
+package io.github.yoonseo6399.communication
 
 
 //그래서 tx 요청 -> Rx -> tx ( 나 데이터 받았어요 ) ㅇㅋ
@@ -6,18 +6,42 @@ sealed class Command(val byte: Byte, val description: String) {
     override fun equals(other: Any?): Boolean {
         return other is Command && other.byte == byte
     }
+    open fun parse(data: ByteArray): Any = data
     // --- 전등 관련 ---
     sealed class Lamp(byte: Byte, description: String) : Command(byte, description) {
         object Control : Lamp(49, "전등 제어 요청")
-        object State : Lamp(65, "전등 상태 요청")
+        object State : Lamp(65, "전등 상태 요청"){
+            override fun parse(data: ByteArray): List<Boolean> {
+
+                return data.drop(1).take(data.first().toInt()).map { it == 1.toByte() }
+            }
+        }
         object DetailState : Lamp(80, "전등 상태 상세(CMD2)")
     }
 
     // --- 콘센트 관련 ---
     sealed class Conc(byte: Byte, description: String) : Command(byte, description) {
         object Control : Conc(50, "콘센트 제어 요청")
-        object State : Conc(66, "콘센트 상태 요청")
-        object PowerState : Conc(67, "콘센트 소비전력 요청")
+        object State : Conc(66, "콘센트 상태 요청"){
+            override fun parse(data: ByteArray): List<Boolean> {
+                val count = data.first().toInt()
+                val activeStatus = data.slice(1..count).map { it == 1.toByte() }
+                val restIDK = data.drop(1+count) //TODO find what that means
+                return activeStatus
+            }
+        }
+        object PowerState : Conc(67, "콘센트 소비전력 요청"){
+            override fun parse(data: ByteArray): List<Double> {
+                val count = data.first().toInt()
+                val wattages = data.drop(1).chunked(2).map {
+                    val hi = it[0].toInt() and 0xFF
+                    val lo = it[1].toInt() and 0xFF
+                    val rawValue = (hi shl 8) or lo
+                    return@map rawValue / 2.0
+                }
+                return wattages
+            }
+        }
         object CutState : Conc(68, "콘센트 대기전력차단 상태 요청")
         object DetailState : Conc(81, "콘센트 상태 상세(CMD2)")
     }

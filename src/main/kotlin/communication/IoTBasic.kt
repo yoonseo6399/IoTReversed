@@ -1,8 +1,5 @@
-package io.github.yoonseo6399
+package io.github.yoonseo6399.communication
 
-import io.github.yoonseo6399.communication.CMD2_REQ_SETTING
-import io.github.yoonseo6399.communication.DeviceConnection
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -11,10 +8,13 @@ import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-data class Packet(val cmd : Command,val payload : ByteArray){
+data class Packet(val cmd : Command, val payload : ByteArray){
     constructor(cmd: Command, payload: CharArray) : this(cmd,payload.map { it.code.toByte() }.toByteArray())
     companion object {
         fun create(cmd: Command, vararg payload: Byte) = Packet(cmd,payload)
+    }
+    fun parse() : Any{
+        return cmd.parse(payload)
     }
     // toByte sus....
     fun serialize(len : Byte = payload.size.toByte()): ByteArray {
@@ -84,7 +84,7 @@ class PacketFetchBuilder(
     private var maxRetries = 3
     private var timeout = 2.seconds
 
-    fun fetch(cmd: Command,ack : Boolean = true) = apply { targetCommands.put(cmd,ack) }
+    fun fetch(cmd: Command, ack : Boolean = true) = apply { targetCommands.put(cmd,ack) }
 
     fun retry(interval: Duration, count: Int) = apply {
         retryInterval = interval
@@ -206,7 +206,7 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     // 5. 실제 데이터 추출 (5번 인덱스부터 dataLength 만큼)
     val data = bArr.sliceArray(5 until 5 + dataLength)
 
-    return Command.fromByte(cmd)?.let { Packet(it,data) }
+    return Command.Companion.fromByte(cmd)?.let { Packet(it,data) }
 }
 
 /**
