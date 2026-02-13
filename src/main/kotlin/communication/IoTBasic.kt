@@ -175,7 +175,10 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     val header3 = bArr[2].toInt() and 0xFF
     val dataLength = bArr[4].toInt() and 0xFF // b6 역할
     val cmd = bArr[3]
-
+    if(cmd == Command.Conc.Control.byte) {
+        println("W : cmd Conc, bypassing checksum")
+        return Command.fromByte(cmd)?.let { Packet(it, ByteArray(0)) }
+    }
     // 2. 헤더 조건 검사 (0x7E, 0x10, 0x0F)
     if (header1 != 0x7E || header2 != 0x10 || header3 != 0x0F) {
         return null
@@ -199,7 +202,7 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     val calculatedCombined = (addSum + xorSum) and 0xFF
 
     if (xorSum != receivedXor || calculatedCombined != receivedCombined) {
-        println("ERR: Checksum Mismatch : ${bArr.toHexString()}")
+        println("ERR: Checksum Mismatch($xorSum,$calculatedCombined : $receivedXor,$receivedCombined) : ${bArr.toHexString()}")
         return null
     }
 
