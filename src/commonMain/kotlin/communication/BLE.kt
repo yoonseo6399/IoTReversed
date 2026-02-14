@@ -74,7 +74,7 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
         return packet
     }
     @OptIn(ExperimentalStdlibApi::class)
-    suspend inline fun sendPacket(packet: Packet) {
+    suspend fun sendPacket(packet: Packet) {
         peripheral.write(rxCharacteristic,packet.serialize())
     }
 

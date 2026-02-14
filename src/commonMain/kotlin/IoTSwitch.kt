@@ -18,6 +18,7 @@ import io.github.yoonseo6399.communication.uartRxParser
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -91,6 +92,7 @@ class IoTSwitch(
                 return null
             }
             println("connected!")
+            delay(100L)
             val dstat = connection!!.requestAllStatus() ?: return null
             println(dstat)
             val lamps = dstat.lampStatus.mapIndexed { i,e ->
@@ -104,14 +106,18 @@ class IoTSwitch(
         fun findNewDevice() : Deferred<Advertisement?> {
             return registrationScope.async {
                 try {
-                    withTimeout((50).seconds) {  Scanner {
+                    withTimeout((15).seconds) {  Scanner {
                         filters {
                             match {
                                 name = Filter.Name.Prefix("Clio_UART [Clio_UART.]")
                             }
+                            match {
+                                name = Filter.Name.Exact("Clio_UART.")
+                            }
                         }
                     }.advertisements.first() }
                 } catch (e : TimeoutCancellationException){
+
                     null
                 }
             }

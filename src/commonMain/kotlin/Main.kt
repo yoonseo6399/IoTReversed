@@ -14,12 +14,12 @@ fun main() {
         //val a = register().await()
         //println(a?.identifier)
         //return@runBlocking
-        val switch = IoTSwitch.connect(uuid.toIdentifier()) ?: return@runBlocking
-        switch.lamp.first().flipState()
-
-        switch.outlet.first().flipState()
-
-        switch.printUnhandled()
+//        val switch = IoTSwitch.connect(uuid.toIdentifier()) ?: return@runBlocking
+//        switch.lamp.first().flipState()
+//
+//        switch.outlet.first().flipState()
+//
+//        switch.printUnhandled()
         delay(500)
 //        println(r)
 //        println("remainder")
