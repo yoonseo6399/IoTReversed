@@ -2,36 +2,20 @@
 
 package io.github.yoonseo6399.communication
 
-import com.juul.kable.Advertisement
-import com.juul.kable.Characteristic
-import com.juul.kable.Filter
-import com.juul.kable.NotConnectedException
-import com.juul.kable.Peripheral
-import com.juul.kable.Scanner
-import com.juul.kable.characteristicOf
-import com.juul.kable.toIdentifier
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
+import com.juul.kable.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 val registrationScope = CoroutineScope(Job() + CoroutineName("registrationScope") + Dispatchers.IO)
 
-val RX_SERVICE_UUID = Uuid.parse("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-val RX_CHAR_UUID = Uuid.parse("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
-val TX_CHAR_UUID = Uuid.parse("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
-val UUID_HEART_RATE_MEASUREMENT = Uuid.parse("00002a37-0000-1000-8000-00805f9b34fb");
+val RX_SERVICE_UUID = Uuid.parse("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+val RX_CHAR_UUID = Uuid.parse("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
+val TX_CHAR_UUID = Uuid.parse("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+val UUID_HEART_RATE_MEASUREMENT = Uuid.parse("00002a37-0000-1000-8000-00805f9b34fb")
 data class DeviceStatus(
     val lampStatus : List<Boolean>,
     val concStatus : List<Boolean>,
@@ -47,25 +31,13 @@ data class DeviceStatus(
 }
 
 data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic,val packets : Flow<Packet>){
-    /**suspend fun requestAllStatus() : DeviceStatus?{
-        sendPacket(Packet.create(Command.Device.Status,1))
-        //packets.collect { p -> ack(p).also { println(p.cmd.byte) } }
-        val whatIsThis = waitForPacket(Command.Device.Status,false)
-        val lampPacket = waitForPacket(Command.Lamp.State).payload.toMutableList()//.also { println(it.map { it.toInt() }) }
-        val lampCount = lampPacket.first()
-        val lampStatus = lampPacket.slice(1..4)
-       // waitForPacket(Command.Lamp.State)
-        val concStatus = waitForPacket(Command.Conc.State).payload
-        val concPowerUsage = waitForPacket(Command.Conc.PowerState).payload
-        val concCutStatus = waitForPacket(Command.Conc.CutState).payload
+    /**
         sendPacket(Packet.create(Command.Power.Control,1))
-        println("conc")
-        //I DONT KNOW WHY BUY REQ-POWER_CONTROL's response is
-        delay(1000)
+        //I DON'T KNOW WHY BUY REQ-POWER_CONTROL's response is
         val concPowerValue = waitForPacket(Command.Power.State).payload.let { parsePowerValue(it) }.also { println(it) }
 
         return null//return DeviceStatus(lampCount,lampStatus) //46107 packet is sus.. why send ctrl power?
-    }**/
+    **/
     fun requestInfo(packet: Packet) = PacketFetchBuilder(this, packet)
 
     suspend fun requestAllStatus(): DeviceStatus? {
@@ -102,7 +74,7 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
         return packet
     }
     @OptIn(ExperimentalStdlibApi::class)
-    suspend inline fun sendPacket(packet: Packet) {
+    suspend fun sendPacket(packet: Packet) {
         peripheral.write(rxCharacteristic,packet.serialize())
     }
 
@@ -111,22 +83,7 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
     }
 }
 
-const val CMD2_REQ_SETTING : Byte = 126;
+const val CMD2_REQ_SETTING : Byte = 126
 
 
 
-fun register() : Deferred<Advertisement?> {
-    return registrationScope.async {
-        try {
-            withTimeout((50).seconds) {  Scanner {
-                filters {
-                    match {
-                        name = Filter.Name.Prefix("Clio_UART [Clio_UART.]")
-                    }
-                }
-            }.advertisements.first() }
-        } catch (e : TimeoutCancellationException){
-            null
-        }
-    }
-}
