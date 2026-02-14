@@ -1,8 +1,11 @@
 package io.github.yoonseo6399
 
+import com.juul.kable.Advertisement
+import com.juul.kable.Filter
 import com.juul.kable.Identifier
 import com.juul.kable.NotConnectedException
 import com.juul.kable.Peripheral
+import com.juul.kable.Scanner
 import com.juul.kable.characteristicOf
 import io.github.yoonseo6399.communication.Command
 import io.github.yoonseo6399.communication.DeviceConnection
@@ -10,16 +13,19 @@ import io.github.yoonseo6399.communication.Packet
 import io.github.yoonseo6399.communication.RX_CHAR_UUID
 import io.github.yoonseo6399.communication.RX_SERVICE_UUID
 import io.github.yoonseo6399.communication.TX_CHAR_UUID
+import io.github.yoonseo6399.communication.registrationScope
 import io.github.yoonseo6399.communication.uartRxParser
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 
 abstract class IoTModule(val connection: DeviceConnection){
@@ -57,8 +63,9 @@ class Outlet(connection: DeviceConnection, override val number: Int, state: Bool
         setState(!powerFlowState.value)
     }
 }
+/**IoT Switch device controller**/
 class IoTSwitch(
-    val uuid : Identifier,
+    val identifier : Identifier,
     private val connection: DeviceConnection,
     val lamp : Set<Lamp>,
     val outlet : Set<Outlet>
@@ -66,10 +73,9 @@ class IoTSwitch(
 
     companion object {
         @OptIn(ExperimentalStdlibApi::class, ExperimentalUuidApi::class)
-        suspend fun connect(uuid : Identifier) : IoTSwitch?{
-            val scope = CoroutineScope(Job() + CoroutineName("DeviceConnection : $uuid") + Dispatchers.IO)
+        suspend fun connect(identifier: Identifier, peripheralProvider: (Identifier) -> Peripheral) : IoTSwitch?{
             println("connecting...")
-            val peripheral = Peripheral(uuid)
+            val peripheral = peripheralProvider.invoke(identifier)
             var connection : DeviceConnection? = null
             try {
                 peripheral.connect()
@@ -93,7 +99,22 @@ class IoTSwitch(
             val outlets = dstat.concStatus.mapIndexed { i,e ->
                 Outlet(connection,i+1,e)
             }
-            return IoTSwitch(uuid,connection, lamps.toSet(), outlets.toSet())
+            return IoTSwitch(identifier,connection, lamps.toSet(), outlets.toSet())
+        }
+        fun findNewDevice() : Deferred<Advertisement?> {
+            return registrationScope.async {
+                try {
+                    withTimeout((50).seconds) {  Scanner {
+                        filters {
+                            match {
+                                name = Filter.Name.Prefix("Clio_UART [Clio_UART.]")
+                            }
+                        }
+                    }.advertisements.first() }
+                } catch (e : TimeoutCancellationException){
+                    null
+                }
+            }
         }
     }
     fun printUnhandled(){
