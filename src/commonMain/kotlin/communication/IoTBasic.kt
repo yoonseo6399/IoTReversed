@@ -1,5 +1,6 @@
 package io.github.yoonseo6399.communication
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -131,7 +132,9 @@ class PacketFetchBuilder(
                 if (results.keys.containsAll(targetCommands.keys)) {
                     return results
                 }
-            } catch (e: Exception) {
+            } catch (e : CancellationException){
+                throw e
+            }catch (e: Exception) {
                 println("Fetch failed (attempt ${currentRetry + 1}): ${e.message}")
                 if (e is NoSuchElementException) {
                     println("기기 상태 불일치 감지 - 재연결 시도")

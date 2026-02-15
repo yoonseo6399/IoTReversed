@@ -66,7 +66,7 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
         println(concCutStatus.map { it.toInt() })
         return DeviceStatus(lampInfo,concStatus,concPowerUsage,concCutStatus)
     }
-    suspend inline fun waitForPacket(cmd : Command,ack : Boolean = true) : Packet {
+    suspend fun waitForPacket(cmd : Command,ack : Boolean = true) : Packet {
         println("wait for packet : $cmd")
         val packet = packets.first { it.cmd.also { println(it) } == cmd }
         if(ack) ack(packet)
