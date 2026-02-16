@@ -42,7 +42,8 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
 
     suspend fun requestAllStatus(): DeviceStatus? {
         // 사용 예시
-        val result = requestInfo(Packet.create(Command.Device.Status, 1))
+        println("requesting..")
+        val result = requestInfo(Packet.create(Command.Device.Status, 1))// this fails without any error
             .fetch(Command.Device.Status)
             .fetch(Command.Lamp.State)
             .fetch(Command.Conc.State)
@@ -51,7 +52,7 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
             .retry(1.seconds, 5)
             .setTimeout(8.seconds)
             .execute()
-
+        println("request complete!")
         if (result == null) {
             println("통신 복구 실패: 데이터를 모두 가져오지 못했습니다.")
             return null

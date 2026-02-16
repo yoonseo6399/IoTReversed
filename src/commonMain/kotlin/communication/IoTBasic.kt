@@ -1,11 +1,14 @@
 package io.github.yoonseo6399.communication
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.repeat
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -59,7 +62,7 @@ data class Packet(val cmd : Command, val payload : ByteArray){
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (javaClass != other?.javaClass) return false
+        if (other !is Packet) return false
 
         other as Packet
 
@@ -84,6 +87,7 @@ class PacketFetchBuilder(
     private var retryInterval = 1.seconds
     private var maxRetries = 3
     private var timeout = 2.seconds
+    private var duplicationLimit = 4
 
     fun fetch(cmd: Command, ack : Boolean = true) = apply { targetCommands.put(cmd,ack) }
 
@@ -97,60 +101,61 @@ class PacketFetchBuilder(
     }
     /**warn this is not Async do not use it with other request**/
     suspend fun execute(): Map<Command, Packet>? {
-        var currentRetry = 0
+        val results = mutableMapOf<Command, Packet>()
 
-        while (currentRetry <= maxRetries) {
-            val results = mutableMapOf<Command, Packet>()
-
+        repeat(maxRetries){ currentTry ->
+            var duplication = 0
             try {
                 // 타임아웃 설정: 전체 fetch 과정이 너무 길어지면 끊음
-                withTimeout(timeout) {
-                    coroutineScope {
-                        // 1. 패킷 수집 시작 (요청 보내기 전부터 관찰 시작)
-                        val collectionJob = launch {
-                            connection.packets.collect { packet ->
-                                if (targetCommands.contains(packet.cmd)) {
-                                    results[packet.cmd] = packet
-                                    // ACK 전송 (기존 로직 유지)
-                                    if(targetCommands[packet.cmd] == true) connection.ack(packet)
-                                    // 모든 패킷을 다 모았다면 종료
-                                    if (results.keys.containsAll(targetCommands.keys)) {
-                                        cancel()
-                                    }
-                                }
+                withTimeout(timeout) { coroutineScope {
+                    // 1. 패킷 수집 시작 (요청 보내기 전부터 관찰 시작)
+                    val collectionJob = launch {
+                        println("launch")
+                        connection.packets.collect { packet ->
+                            if (!targetCommands.contains(packet.cmd)) return@collect
+                            println("rcvd rr : #${packet.cmd}")
+                            if(results[packet.cmd] != null) duplication ++
+                            if(duplication >= duplicationLimit) throw IllegalStateException("Duplication Limit Reached, Something went wrong, Switch reset recommended")
+                            results[packet.cmd] = packet
+                            if(targetCommands[packet.cmd] == true) connection.ack(packet)
+                            if (results.keys.containsAll(targetCommands.keys)) {
+                                println("all gathered.. canceling")
+                                cancel()
                             }
                         }
-                        // 2. 초기 요청 전송
-                        connection.sendPacket(initialRequest)
-                        // 3. 수집 완료 대기
-                        collectionJob.join()
+                        println("collect end here,")
                     }
-
-                }
+                    // 2. 초기 요청 전송
+                    println("sending init packet")
+                    connection.sendPacket(initialRequest)
+                    println("sending complete!")
+                    // 3. 수집 완료 대기
+                    collectionJob.join()
+                    println("collection end! join complete!")
+                } }
 
                 // 성공적으로 모두 모았는지 확인
                 if (results.keys.containsAll(targetCommands.keys)) {
                     return results
-                }
-            } catch (e : CancellationException){
+                }else throw IllegalStateException("WTF how even possible")
+            }
+            catch (e : IllegalStateException) {
+                println(e.message)
+            }
+            catch (e : CancellationException){
+                println("scope unexpectedly canceled, E :")
+                e.printStackTrace()
                 throw e
-            }catch (e: Exception) {
-                println("Fetch failed (attempt ${currentRetry + 1}): ${e.message}")
+            }
+            catch (e : Exception) {
+                println("Fetch failed (attempt #${currentTry}): ${e.message}")
                 if (e is NoSuchElementException) {
                     println("기기 상태 불일치 감지 - 재연결 시도")
                     connection.peripheral.disconnect()
                     connection.peripheral.connect() // 강제 재연결로 서비스 테이블 갱신
                 }
             }
-
-            // 실패 시 재시도 전 대기
-            currentRetry++
-            if (currentRetry <= maxRetries) {
-                delay(retryInterval)
-                println("Retrying... $currentRetry")
-            }
         }
-
         return null // 끝내 실패한 경우
     }
 }

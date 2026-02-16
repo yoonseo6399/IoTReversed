@@ -36,16 +36,18 @@ class Lamp(connection: DeviceConnection,override val number: Int, isOn: Boolean)
     private val _stateFlow = MutableStateFlow(isOn)
     val isOn = _stateFlow.asStateFlow()
 
-    suspend fun setState(state: Boolean){
+    suspend fun setState(state: Boolean) : Boolean{
         //IDK whether should I check the state
-        connection.requestInfo(Packet.create(Command.Lamp.Control,number.toByte(),state.toByte()))
+        val r = connection.requestInfo(Packet.create(Command.Lamp.Control,number.toByte(),state.toByte()))
             .fetch(Command.Lamp.Control, ack = false)
             .execute()
+        if(r==null) return false
         _stateFlow.value = state
+        return true
     }
-    suspend fun flipState(){
+    suspend fun flipState()=
         setState(!isOn.value)
-    }
+
 }
 class Outlet(connection: DeviceConnection, override val number: Int, state: Boolean) : IoTModule(connection){
     private val _stateFlow = MutableStateFlow(state)
@@ -71,7 +73,9 @@ class IoTSwitch(
     val lamp : Set<Lamp>,
     val outlet : Set<Outlet>
 ) {
-
+    init {
+        Command.allCommands
+    }
     companion object {
         @OptIn(ExperimentalStdlibApi::class, ExperimentalUuidApi::class)
         suspend fun connect(identifier: Identifier, peripheralProvider: (Identifier) -> Peripheral) : IoTSwitch?{
@@ -91,9 +95,9 @@ class IoTSwitch(
                 println("device cannot be found")
                 return null
             }
-            println("connected!")
-            delay(100L)
+            println("connected!, loading infos")
             val dstat = connection!!.requestAllStatus() ?: return null
+            println("parse start")
             println(dstat)
             val lamps = dstat.lampStatus.mapIndexed { i,e ->
                 Lamp(connection,i+1,e)
@@ -101,6 +105,7 @@ class IoTSwitch(
             val outlets = dstat.concStatus.mapIndexed { i,e ->
                 Outlet(connection,i+1,e)
             }
+            println("connection complete!")
             return IoTSwitch(identifier,connection, lamps.toSet(), outlets.toSet())
         }
         fun findNewDevice() : Deferred<Advertisement?> {

@@ -3,6 +3,7 @@ package io.github.yoonseo6399.communication
 
 //그래서 tx 요청 -> Rx -> tx ( 나 데이터 받았어요 ) ㅇㅋ
 sealed class Command(val byte: Byte, val description: String) {
+
     override fun equals(other: Any?): Boolean {
         return other is Command && other.byte == byte
     }
@@ -103,7 +104,7 @@ sealed class Command(val byte: Byte, val description: String) {
 
     // --- 동적 조회를 위한 Companion Object ---
     companion object {
-        private val allCommands: List<Command> by lazy {
+        internal val allCommands: List<Command> by lazy {
             Command::class.nestedClasses.toMutableList().flatMap { it.nestedClasses }.map { it.objectInstance as Command }
         }
 
