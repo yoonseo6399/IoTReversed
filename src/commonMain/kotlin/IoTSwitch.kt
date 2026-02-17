@@ -3,26 +3,18 @@ package io.github.yoonseo6399
 import com.juul.kable.Advertisement
 import com.juul.kable.Filter
 import com.juul.kable.Identifier
-import com.juul.kable.NotConnectedException
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
-import com.juul.kable.characteristicOf
 import io.github.yoonseo6399.communication.Command
 import io.github.yoonseo6399.communication.DeviceConnection
 import io.github.yoonseo6399.communication.Packet
-import io.github.yoonseo6399.communication.RX_CHAR_UUID
-import io.github.yoonseo6399.communication.RX_SERVICE_UUID
-import io.github.yoonseo6399.communication.TX_CHAR_UUID
 import io.github.yoonseo6399.communication.registrationScope
-import io.github.yoonseo6399.communication.uartRxParser
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -81,28 +73,14 @@ class IoTSwitch(
         suspend fun connect(identifier: Identifier, peripheralProvider: (Identifier) -> Peripheral) : IoTSwitch?{
             println("connecting...")
             val peripheral = peripheralProvider.invoke(identifier)
-            var connection : DeviceConnection? = null
-            try {
-                peripheral.connect()
-                peripheral.scope.launch {
-                    val rxcharacteristic = characteristicOf(RX_SERVICE_UUID,RX_CHAR_UUID)
-                    val txCharacteristic = characteristicOf(RX_SERVICE_UUID,TX_CHAR_UUID)
-                    val observation = peripheral.observe(txCharacteristic)
-                    val packet = observation.mapNotNull { uartRxParser(it) }
-                    connection = DeviceConnection(peripheral,rxcharacteristic,txCharacteristic,packet)
-                }.join()
-            } catch (e : NotConnectedException){
-                println("device cannot be found")
-                return null
-            }
-            println("connected!, loading infos")
-            val dstat = connection!!.requestAllStatus() ?: return null
-            println("parse start")
-            println(dstat)
-            val lamps = dstat.lampStatus.mapIndexed { i,e ->
+            val connection = DeviceConnection.fromOrNull(peripheral) ?: return abort("connection failed")
+            println("connected")
+            val statData = connection.requestAllStatus() ?: return abort("request failed")
+            println(statData)
+            val lamps = statData.lampStatus.mapIndexed { i, e ->
                 Lamp(connection,i+1,e)
             }
-            val outlets = dstat.concStatus.mapIndexed { i,e ->
+            val outlets = statData.concStatus.mapIndexed { i, e ->
                 Outlet(connection,i+1,e)
             }
             println("connection complete!")
@@ -122,7 +100,6 @@ class IoTSwitch(
                         }
                     }.advertisements.first() }
                 } catch (e : TimeoutCancellationException){
-
                     null
                 }
             }
@@ -138,4 +115,12 @@ class IoTSwitch(
     }
 
     suspend fun disconnect() = connection.peripheral.disconnect()
+    fun close() = connection.peripheral.close()
+}
+
+/**
+ * return null, and log str**/
+fun <T> abort(str : String) : T? {
+    println(str)
+    return null
 }

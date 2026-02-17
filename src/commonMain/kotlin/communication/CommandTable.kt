@@ -2,7 +2,7 @@ package io.github.yoonseo6399.communication
 
 
 //그래서 tx 요청 -> Rx -> tx ( 나 데이터 받았어요 ) ㅇㅋ
-sealed class Command(val byte: Byte, val description: String) {
+sealed class Command(val byte: Byte, val description: String,val ack : Boolean = true) {
 
     override fun equals(other: Any?): Boolean {
         return other is Command && other.byte == byte

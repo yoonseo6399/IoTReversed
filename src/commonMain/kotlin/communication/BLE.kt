@@ -2,10 +2,23 @@
 
 package io.github.yoonseo6399.communication
 
-import com.juul.kable.*
-import kotlinx.coroutines.*
+import com.juul.kable.Characteristic
+import com.juul.kable.NotConnectedException
+import com.juul.kable.Peripheral
+import com.juul.kable.characteristicOf
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -30,7 +43,39 @@ data class DeviceStatus(
     }
 }
 
-data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic,val packets : Flow<Packet>){
+class DeviceConnection private constructor(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic){
+    lateinit var packets : Flow<Packet>
+        private set
+
+    companion object{
+        suspend fun fromOrNull(peripheral: Peripheral) : DeviceConnection?{
+            peripheral.disconnect()
+            delay(500)
+            var connection : DeviceConnection? = null
+            try {
+                peripheral.connect()
+                peripheral.scope.launch {
+                    val rxcharacteristic = characteristicOf(RX_SERVICE_UUID,RX_CHAR_UUID)
+                    val txCharacteristic = characteristicOf(RX_SERVICE_UUID,TX_CHAR_UUID)
+                    val observation = peripheral.observe(txCharacteristic)
+                    connection = DeviceConnection(peripheral,rxcharacteristic,txCharacteristic)
+                    println("wtf")
+
+                    val packet = observation.mapNotNull { uartRxParser(it) }.onEach { if(it.cmd.ack) connection.ack(it) }.shareIn(peripheral.scope,
+                        SharingStarted.Eagerly, replay = 20)
+                    connection.packets = packet
+                }.join()
+                println("wtf")
+
+            } catch (e : NotConnectedException){
+                println("device cannot be found : ${e.message}")
+                return null
+            }
+            println("wtff")
+
+            return connection
+        }
+    }
     /**
         sendPacket(Packet.create(Command.Power.Control,1))
         //I DON'T KNOW WHY BUY REQ-POWER_CONTROL's response is
