@@ -1,5 +1,3 @@
-import org.gradle.internal.impldep.com.amazonaws.PredefinedClientConfigurations.defaultConfig
-
 plugins {
     kotlin("multiplatform")
     id("com.android.kotlin.multiplatform.library")
@@ -28,7 +26,7 @@ kotlin {
         androidLibrary {
             namespace = "io.github.yoonseo6399.iotswitch"
             compileSdk = 36 // 또는 35
-            minSdk = 24
+            minSdk = 28
         }
 
         androidMain.dependencies {

@@ -2,15 +2,15 @@ package io.github.yoonseo6399.communication
 
 
 //그래서 tx 요청 -> Rx -> tx ( 나 데이터 받았어요 ) ㅇㅋ
-sealed class Command(val byte: Byte, val description: String) {
+sealed class Command(val byte: Byte, val description: String,val ack : Boolean = true) {
 
     override fun equals(other: Any?): Boolean {
         return other is Command && other.byte == byte
     }
     open fun parse(data: ByteArray): Any = data
     // --- 전등 관련 ---
-    sealed class Lamp(byte: Byte, description: String) : Command(byte, description) {
-        object Control : Lamp(49, "전등 제어 요청")
+    sealed class Lamp(byte: Byte, description: String,ack : Boolean = true) : Command(byte, description,ack) {
+        object Control : Lamp(49, "전등 제어 요청",false)
         object State : Lamp(65, "전등 상태 요청"){
             override fun parse(data: ByteArray): List<Boolean> {
 
@@ -21,8 +21,8 @@ sealed class Command(val byte: Byte, val description: String) {
     }
 
     // --- 콘센트 관련 ---
-    sealed class Conc(byte: Byte, description: String) : Command(byte, description) {
-        object Control : Conc(50, "콘센트 제어 요청")
+    sealed class Conc(byte: Byte, description: String,ack : Boolean = true) : Command(byte, description,ack) {
+        object Control : Conc(50, "콘센트 제어 요청",false)
         object State : Conc(66, "콘센트 상태 요청"){
             override fun parse(data: ByteArray): List<Boolean> {
                 val count = data.first().toInt()
@@ -55,8 +55,8 @@ sealed class Command(val byte: Byte, val description: String) {
         object DetailState : Power(84, "일괄제어 상태 상세(CMD2)")
     }
     // --- 기기/시스템 관련 ---
-    sealed class Device(byte: Byte, description: String) : Command(byte, description) {
-        object Status : Device(52, "기기 전체 상태 요청")
+    sealed class Device(byte: Byte, description: String,ack : Boolean = true) : Command(byte, description,ack) {
+        object Status : Device(52, "기기 전체 상태 요청",false)
         object SetInfo : Device(53, "설정 정보 요청")
         object TimeInfo : Device(62, "시간 정보 요청")
         object Alive : Device(124, "생존 확인(ALIVE)")

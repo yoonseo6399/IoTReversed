@@ -2,11 +2,11 @@
 
 package io.github.yoonseo6399.communication
 
-import com.juul.kable.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
-import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -27,60 +27,6 @@ data class DeviceStatus(
                 "conc : $concStatus\n" +
                 "power : $concPowerUsage"
 
-    }
-}
-
-data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic,val packets : Flow<Packet>){
-    /**
-        sendPacket(Packet.create(Command.Power.Control,1))
-        //I DON'T KNOW WHY BUY REQ-POWER_CONTROL's response is
-        val concPowerValue = waitForPacket(Command.Power.State).payload.let { parsePowerValue(it) }.also { println(it) }
-
-        return null//return DeviceStatus(lampCount,lampStatus) //46107 packet is sus.. why send ctrl power?
-    **/
-    fun requestInfo(packet: Packet) = PacketFetchBuilder(this, packet)
-
-    suspend fun requestAllStatus(): DeviceStatus? {
-        // 사용 예시
-        println("requesting..")
-        val result = requestInfo(Packet.create(Command.Device.Status, 1))// this fails without any error
-            .fetch(Command.Device.Status)
-            .fetch(Command.Lamp.State)
-            .fetch(Command.Conc.State)
-            .fetch(Command.Conc.PowerState)
-            .fetch(Command.Conc.CutState)
-            .retry(1.seconds, 5)
-            .setTimeout(8.seconds)
-            .execute()
-        println("request complete!")
-        if (result == null) {
-            println("통신 복구 실패: 데이터를 모두 가져오지 못했습니다.")
-            return null
-        }
-
-        // 결과 가공
-        val lampInfo = result[Command.Lamp.State]!!.parse() as List<Boolean>
-        val concStatus = result[Command.Conc.State]!!.parse() as List<Boolean>
-        val concPowerUsage = result[Command.Conc.PowerState]!!.parse() as List<Double>
-        val concCutStatus = result[Command.Conc.CutState]!!.payload
-
-        println(concCutStatus.map { it.toInt() })
-        return DeviceStatus(lampInfo,concStatus,concPowerUsage,concCutStatus)
-    }
-    suspend fun waitForPacket(cmd : Command,ack : Boolean = true) : Packet {
-        println("wait for packet : $cmd")
-        val packet = packets.first { it.cmd.also { println(it) } == cmd }
-        if(ack) ack(packet)
-        println("Successfully Rcvd packet : $packet")
-        return packet
-    }
-    @OptIn(ExperimentalStdlibApi::class)
-    suspend fun sendPacket(packet: Packet) {
-        peripheral.write(rxCharacteristic,packet.serialize())
-    }
-
-    suspend fun ack(packet: Packet){
-        sendPacket(Packet.create(packet.cmd,1))
     }
 }
 
