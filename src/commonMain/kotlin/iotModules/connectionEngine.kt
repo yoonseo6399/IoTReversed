@@ -4,7 +4,10 @@ import com.juul.kable.Characteristic
 import com.juul.kable.Peripheral
 import com.juul.kable.State
 import com.juul.kable.characteristicOf
+import io.github.yoonseo6399.communication.Command
+import io.github.yoonseo6399.communication.FetchResult
 import io.github.yoonseo6399.communication.Packet
+import io.github.yoonseo6399.communication.PacketFetchBuilder
 import io.github.yoonseo6399.communication.RX_CHAR_UUID
 import io.github.yoonseo6399.communication.RX_SERVICE_UUID
 import io.github.yoonseo6399.communication.TX_CHAR_UUID
@@ -31,6 +34,10 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 
 
@@ -47,6 +54,21 @@ abstract class ConnectionEngine(val peripheral: Peripheral){
     open suspend fun enQueuePacket(packet: Packet) {
         packetChannel.send(packet)
     }
+    suspend fun fetchDefaultInfo() : FetchResult{
+        context.logger?.log("fetching default info...")
+        return PacketFetchBuilder(this,Packet.create(Command.Device.Status, 1))// this fails without any error
+            .fetch(Command.Device.Status)
+            .fetch(Command.Lamp.State)
+            .fetch(Command.Conc.State)
+            .fetch(Command.Conc.PowerState)
+            .fetch(Command.Conc.CutState)
+            .retry(5.seconds, 2)
+            .setTimeout(8.seconds)
+            .execute()
+    }
+    /**@throws kotlinx.coroutines.TimeoutCancellationException if given timeout is exceeded
+     * @throws com.juul.kable.NotConnectedException if kable's Connection fails**/
+    abstract suspend fun tryConnectWithTimeout(timeout : Duration) : Boolean
     abstract fun startQueueProcessing(rxCharacteristic : Characteristic)
     abstract fun startObserving(txCharacteristic: Characteristic)
     abstract fun stop()
@@ -54,6 +76,13 @@ abstract class ConnectionEngine(val peripheral: Peripheral){
 }
 
 class DefaultConnectionEngine(peripheral: Peripheral) : ConnectionEngine(peripheral){
+    override suspend fun tryConnectWithTimeout(timeout: Duration) : Boolean {
+        return withTimeout(timeout) {
+            peripheral.connect()
+            true
+        }
+    }
+
     override fun startQueueProcessing(rxCharacteristic : Characteristic) {
         //무결성을 보장하기 위한 state observer
         connectionScope.launch {
