@@ -1,8 +1,8 @@
+@file:OptIn(ExperimentalUuidApi::class)
 package io.github.yoonseo6399.iotModules
 
-import com.juul.kable.NotConnectedException
 import com.juul.kable.characteristicOf
-import io.github.yoonseo6399.communication.DeviceConnection
+import io.github.yoonseo6399.communication.Command
 import io.github.yoonseo6399.communication.FetchData
 import io.github.yoonseo6399.communication.FetchResult
 import io.github.yoonseo6399.communication.Packet
@@ -13,14 +13,13 @@ import iotModules.ConnectionEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.seconds
-
-abstract class IoTModule(val connection: DeviceConnection){
-    open val number = 0
-}
+import kotlin.uuid.ExperimentalUuidApi
 
 sealed class IoTSwitchState(val context : IoTSwitch) {
     /**@throws IllegalStateException on Connection State that cannot send IO operation**/
@@ -41,13 +40,17 @@ sealed class IoTSwitchState(val context : IoTSwitch) {
         }
 
         override suspend fun onExit() {
-            //TODO Cleanup logic for disconnected state if any
-            context.connectionEngine.stop()
+            context.clearModules()
         }
     }
     class Error(context: IoTSwitch, val exception: Exception) : IoTSwitchState(context){
-        override suspend fun onEnter() {}
-        override suspend fun onExit() {}
+        override suspend fun onEnter() {
+            context.logger?.err("Error: ${exception.message}")
+            context.connectionEngine.stop()
+        }
+        override suspend fun onExit() {
+            context.clearModules()
+        }
     }
     class Connecting(context: IoTSwitch) : IoTSwitchState(context) {
         override suspend fun onEnter() {
@@ -65,20 +68,24 @@ sealed class IoTSwitchState(val context : IoTSwitch) {
     }
 
     class Initializing(context: IoTSwitch) : IoTSwitchState(context){
-
-        //this code actually the weakest part of this project
-        //it does not consider any disconnection state
-        //idk how to fix it
+        @OptIn(ExperimentalUuidApi::class)
         override suspend fun onEnter() {
             context.logger?.log("Initializing...")
-            var fail : FetchResult.Failure? = null
+            val rx = characteristicOf(RX_SERVICE_UUID, RX_CHAR_UUID)
+            val tx = characteristicOf(RX_SERVICE_UUID, TX_CHAR_UUID)
+            context.connectionEngine.startQueueProcessing(rx)
+            context.connectionEngine.startObserving(tx)
+            delay(200) // Wait for observation to be ready
+
+            var failure: FetchResult.Failure? = null
             context.connectionEngine.fetchDefaultInfo().onSuccess {
-                context.initialize(this)
+                context.initializeModules(this)
             }.onFailure {
-                fail = this
+                failure = this
             }
-            if(fail != null){
-                context.setState(Error(context,fail.exception!!))
+
+            if(failure != null){
+                context.setState(Error(context, failure!!.exception ?: Exception("Unknown initialization error")))
                 return
             }
             context.setState(Connected(context))
@@ -93,10 +100,6 @@ sealed class IoTSwitchState(val context : IoTSwitch) {
 
         override suspend fun onEnter() {
             context.logger?.log("Connection successful.")
-            val rx = characteristicOf(RX_SERVICE_UUID, RX_CHAR_UUID)
-            val tx = characteristicOf(RX_SERVICE_UUID, TX_CHAR_UUID)
-            context.connectionEngine.startQueueProcessing(rx)
-            context.connectionEngine.startObserving(tx)
         }
 
         override suspend fun onExit() {
@@ -111,6 +114,7 @@ class IoTSwitch(
 ){
     private var stateTransitionJob: Job? = null
     var logger : IoTLogger? = null
+    val modules = mutableSetOf<IoTModule>()
 
     init {
         connectionEngine.register(this)
@@ -125,14 +129,13 @@ class IoTSwitch(
         this.logger = logger
     }
     private val _state = MutableStateFlow<IoTSwitchState>(IoTSwitchState.Disconnected(this,"created"))
-    val state = _state.asStateFlow()
+    val state: StateFlow<IoTSwitchState> = _state.asStateFlow()
 
     fun connect() {
         if (stateTransitionJob?.isActive == true || _state.value !is IoTSwitchState.Disconnected) {
             logger?.warn("Cannot connect: Already connected, connecting, or disconnecting.")
             return
         }
-
         stateTransitionJob = scope.launch {
             setState(IoTSwitchState.Connecting(this@IoTSwitch))
         }
@@ -147,9 +150,40 @@ class IoTSwitch(
         }
     }
 
-    internal fun initialize(fetchData : FetchData) {
-        // TODO: Apply the fetched data to the IoT Switch's properties
-        logger?.log("Initialized with data: $fetchData")
+    internal fun initializeModules(fetchData : FetchData) {
+        modules.clear()
+        val lampStates = fetchData[Command.Lamp.State].parse() as? List<Boolean>
+        lampStates?.forEachIndexed { index, isOn ->
+            modules += Lamp(this, index, isOn)
+        }
+        val concStates = fetchData[Command.Conc.State].parse() as? List<Boolean>
+        concStates?.forEachIndexed { index, isOn ->
+            modules += Outlet(this, index, isOn)
+        }
+        logger?.log("Initialized ${modules.size} modules.")
+    }
+
+    internal fun clearModules() {
+        modules.clear()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    inline fun <reified T: IoTModule> getModule(number: Int): T? {
+        if (state.value !is IoTSwitchState.Connected) {
+            logger?.warn("Cannot control modules while not connected.")
+            return null
+        }
+        return modules.firstOrNull { it.number == number && it is T } as? T
+    }
+
+    internal suspend fun dispatchPacket(packet: Packet) {
+        // TODO: Implement more sophisticated dispatching logic
+        var patched = false
+        for(module in modules){
+            val success = module.updateState(packet)
+            if(success) patched = true
+        }
+        if(!patched) logger?.warn("packet is not received by any of modules")
     }
 
     internal suspend fun setState(newState: IoTSwitchState){
@@ -160,6 +194,7 @@ class IoTSwitch(
         newState.onEnter()
     }
 }
+
 interface IoTLogger {
     fun init(prefix : String)
     fun log(str : String)
@@ -167,3 +202,13 @@ interface IoTLogger {
     fun rcvdPacket(str : String)
     fun err(str: String)
 }
+
+//--- Module Definitions ---
+
+abstract class IoTModule(
+    protected val context: IoTSwitch,
+    val number: Int
+) {
+    abstract suspend fun updateState(packet : Packet) : Boolean
+}
+
