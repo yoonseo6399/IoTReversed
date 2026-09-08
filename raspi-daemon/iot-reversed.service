@@ -1,0 +1,16 @@
+[Unit]
+Description=IoT Reversed BLE to MQTT bridge
+After=bluetooth.target network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iotbridge
+Group=iotbridge
+ExecStart=/opt/iot-reversed/bin/raspi-daemon --config /etc/iot-reversed/devices.json
+Restart=always
+RestartSec=5
+Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+
+[Install]
+WantedBy=multi-user.target

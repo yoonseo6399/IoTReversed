@@ -1,0 +1,18 @@
+{
+  "mqtt": {
+    "brokerUri": "tcp://127.0.0.1:1883",
+    "clientId": "iot-hub-rpi",
+    "username": null,
+    "password": null
+  },
+  "topicRoot": "iot-hub",
+  "defaultPollIntervalSeconds": 20,
+  "devices": [
+    {
+      "id": "living-room",
+      "bluetoothIdentifier": "00000000-0000-0000-0000-000000000000",
+      "displayName": "Living room switch",
+      "pollIntervalSeconds": 20
+    }
+  ]
+}
