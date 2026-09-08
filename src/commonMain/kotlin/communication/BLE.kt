@@ -6,6 +6,7 @@ import com.juul.kable.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -31,6 +32,7 @@ data class DeviceStatus(
 }
 
 data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Characteristic,val txCharacteristic: Characteristic,val packets : Flow<Packet>){
+    val requestMutex = Mutex()
     /**
         sendPacket(Packet.create(Command.Power.Control,1))
         //I DON'T KNOW WHY BUY REQ-POWER_CONTROL's response is
@@ -84,6 +86,5 @@ data class DeviceConnection(val peripheral: Peripheral,val rxCharacteristic: Cha
 }
 
 const val CMD2_REQ_SETTING : Byte = 126
-
 
 

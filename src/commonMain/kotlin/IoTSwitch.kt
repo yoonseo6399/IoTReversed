@@ -9,6 +9,7 @@ import com.juul.kable.Scanner
 import com.juul.kable.characteristicOf
 import io.github.yoonseo6399.communication.Command
 import io.github.yoonseo6399.communication.DeviceConnection
+import io.github.yoonseo6399.communication.DeviceStatus
 import io.github.yoonseo6399.communication.Packet
 import io.github.yoonseo6399.communication.RX_CHAR_UUID
 import io.github.yoonseo6399.communication.RX_SERVICE_UUID
@@ -36,14 +37,18 @@ class Lamp(connection: DeviceConnection,override val number: Int, isOn: Boolean)
     val isOn = _stateFlow.asStateFlow()
 
     suspend fun setState(state: Boolean){
-        //IDK whether should I check the state
-        connection.requestInfo(Packet.create(Command.Lamp.Control,number.toByte(),state.toByte()))
+        val result = connection.requestInfo(Packet.create(Command.Lamp.Control,number.toByte(),state.toByte()))
             .fetch(Command.Lamp.Control, ack = false)
             .execute()
+        checkNotNull(result) { "Lamp $number did not acknowledge the requested state." }
         _stateFlow.value = state
     }
     suspend fun flipState(){
         setState(!isOn.value)
+    }
+
+    internal fun updateState(state: Boolean) {
+        _stateFlow.value = state
     }
 }
 class Outlet(connection: DeviceConnection, override val number: Int, state: Boolean) : IoTModule(connection){
@@ -51,16 +56,20 @@ class Outlet(connection: DeviceConnection, override val number: Int, state: Bool
     val powerFlowState = _stateFlow.asStateFlow()
 
     suspend fun setState(state: Boolean){
-        //IDK whether should I check the state
         val packet = if(state) Packet.create(Command.Conc.Control,number.toByte())
             else Packet.create(Command.Conc.Control,number.toByte(),0)
-        connection.requestInfo(packet)
+        val result = connection.requestInfo(packet)
             .fetch(Command.Conc.Control, ack = false)
             .execute()
+        checkNotNull(result) { "Outlet $number did not acknowledge the requested state." }
         _stateFlow.value = state
     }
     suspend fun flipState(){
         setState(!powerFlowState.value)
+    }
+
+    internal fun updateState(state: Boolean) {
+        _stateFlow.value = state
     }
 }
 /**IoT Switch device controller**/
@@ -124,6 +133,17 @@ class IoTSwitch(
                 println(it)
             }
         }
+    }
+
+    suspend fun refreshStatus(): DeviceStatus {
+        val status = checkNotNull(connection.requestAllStatus()) { "Unable to retrieve switch status." }
+        lamp.forEach { module ->
+            status.lampStatus.getOrNull(module.number - 1)?.let(module::updateState)
+        }
+        outlet.forEach { module ->
+            status.concStatus.getOrNull(module.number - 1)?.let(module::updateState)
+        }
+        return status
     }
 
     suspend fun disconnect() = connection.peripheral.disconnect()

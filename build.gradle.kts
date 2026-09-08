@@ -2,9 +2,9 @@ import org.gradle.internal.impldep.com.amazonaws.PredefinedClientConfigurations.
 
 plugins {
     kotlin("multiplatform") version "2.1.0"
+    kotlin("plugin.serialization") version "2.1.0" apply false
 
     id("com.android.kotlin.multiplatform.library") version "9.0.0"
-
 }
 
 group = "io.github.yoonseo6399"
@@ -17,9 +17,7 @@ repositories {
 
 
 dependencies {
-//    implementation("com.juul.kable:kable-core:0.42.0")
-//    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-//    implementation(kotlin("reflect"))
+
 }
 
 kotlin {
@@ -34,6 +32,8 @@ kotlin {
         commonMain.dependencies {
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             implementation("com.juul.kable:kable-core:0.42.0")
+            implementation(kotlin("reflect"))
+
         }
 
         androidMain.dependencies {

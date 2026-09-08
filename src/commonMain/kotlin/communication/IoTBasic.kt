@@ -4,6 +4,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -96,6 +97,12 @@ class PacketFetchBuilder(
     }
     /**warn this is not Async do not use it with other request**/
     suspend fun execute(): Map<Command, Packet>? {
+        return connection.requestMutex.withLock {
+            executeSerialized()
+        }
+    }
+
+    private suspend fun executeSerialized(): Map<Command, Packet>? {
         var currentRetry = 0
 
         while (currentRetry <= maxRetries) {

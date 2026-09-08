@@ -11,4 +11,4 @@ plugins {
 }
 
 rootProject.name = "IoTReversed"
-
+include(":raspi-daemon")
