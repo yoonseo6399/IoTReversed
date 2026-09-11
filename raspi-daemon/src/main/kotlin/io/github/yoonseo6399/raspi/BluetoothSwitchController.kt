@@ -4,7 +4,6 @@ package io.github.yoonseo6399.raspi
 
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
-import com.juul.kable.toIdentifier
 import io.github.yoonseo6399.iotModules.IoTSwitch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -95,13 +94,27 @@ class BluetoothSwitchController(
             delay(interval)
         }
     }
+    private fun extractMacWithRegex(jsonString: String): String? {
+        val regex = """dev_([0-9A-Fa-f]{2}[_:][0-9A-Fa-f]{2}[_:][0-9A-Fa-f]{2}[_:][0-9A-Fa-f]{2}[_:][0-9A-Fa-f]{2}[_:][0-9A-Fa-f]{2})""".toRegex()
 
+        val matchResult = regex.find(jsonString) ?: return null
+        val macGroup = matchResult.groupValues[1]
+
+        return macGroup.replace('_', ':').uppercase()
+    }
     private suspend fun ensureConnected(): IoTSwitch {
         switch?.let { return it }
+        println("scanning")
         val advertisement = withTimeout(30.seconds) {
-            Scanner {}.advertisements.first { it.identifier.toString() == configuration.bluetoothIdentifier }
+            Scanner {}.advertisements.first {
+                extractMacWithRegex(it.identifier.toString()).also { scanned ->
+                    println("Scanned MAC : $scanned")
+                } == configuration.bluetoothIdentifier.also { configured ->
+                    println("Matching with : $configured")
+                }
+            }
         }
-        val connected = IoTSwitch(configuration.bluetoothIdentifier.toIdentifier()) { Peripheral(advertisement) }
+        val connected = IoTSwitch(advertisement.identifier) { Peripheral(advertisement) }
         check(connected.connect()) { "Could not connect to ${configuration.id}." }
         switch = connected
         publishAvailability(true)

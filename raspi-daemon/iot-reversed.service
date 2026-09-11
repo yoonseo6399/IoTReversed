@@ -10,7 +10,9 @@ Group=iotbridge
 ExecStart=/opt/iot-reversed/bin/raspi-daemon --config /etc/iot-reversed/devices.json
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+Environment=KABLE_FFI_LIBRARY=/opt/iot-reversed/lib/libbtleplug_ffi.so
 
 [Install]
 WantedBy=multi-user.target

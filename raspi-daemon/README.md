@@ -23,6 +23,26 @@ sudo systemctl enable --now iot-reversed
 
 The service account must be allowed to use the BlueZ system D-Bus service. On Raspberry Pi OS, add it to the distribution's Bluetooth access group if BlueZ access is denied.
 
+### Raspberry Pi OS native BLE library
+
+Kable 0.42.0 publishes its ARM Linux FFI binary from Ubuntu 24.04, which requires glibc 2.38. Raspberry Pi OS Bookworm provides glibc 2.36, so the packaged binary cannot load there. Build the exact same FFI source on the Pi once; this links against the Pi's glibc and does not require an operating-system upgrade.
+
+```bash
+sudo apt install -y build-essential pkg-config libdbus-1-dev git curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+bash raspi-daemon/scripts/build-kable-ffi.sh "$HOME/libbtleplug_ffi.so"
+sudo install -D -m 0755 "$HOME/libbtleplug_ffi.so" /opt/iot-reversed/lib/libbtleplug_ffi.so
+sudo systemctl restart iot-reversed
+```
+
+The supplied systemd unit sets `KABLE_FFI_LIBRARY` to that path. The launcher resolves it before Kable initializes and passes it to UniFFI/JNA. Confirm the resulting native library is compatible before restarting the service:
+
+```bash
+ldd /opt/iot-reversed/lib/libbtleplug_ffi.so
+sudo journalctl -u iot-reversed -n 100 --no-pager
+```
+
 ## MQTT contract
 
 For a device ID `living-room`, lamp 1 uses these retained state and command topics:

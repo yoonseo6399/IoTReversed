@@ -1,6 +1,7 @@
 package io.github.yoonseo6399.raspi
 
 import java.nio.file.Path
+import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -71,6 +72,7 @@ class RaspberryPiHub(private val configurationPath: Path) {
 
 fun main(args: Array<String>) {
     runBlocking {
+        configureKableFfiOverride()
         val configurationPath = parseConfigurationPath(args)
         val hub = RaspberryPiHub(configurationPath)
         Runtime.getRuntime().addShutdownHook(Thread {
@@ -83,6 +85,17 @@ fun main(args: Array<String>) {
             hub.stop()
         }
     }
+}
+
+private fun configureKableFfiOverride() {
+    if (System.getProperty("uniffi.component.btleplug_ffi.libraryOverride") != null) {
+        return
+    }
+    val libraryPath = System.getenv("KABLE_FFI_LIBRARY")?.let(Path::of) ?: return
+    require(Files.isRegularFile(libraryPath)) {
+        "KABLE_FFI_LIBRARY does not point to a regular file: $libraryPath"
+    }
+    System.setProperty("uniffi.component.btleplug_ffi.libraryOverride", libraryPath.toAbsolutePath().toString())
 }
 
 private fun parseConfigurationPath(args: Array<String>): Path = when {
