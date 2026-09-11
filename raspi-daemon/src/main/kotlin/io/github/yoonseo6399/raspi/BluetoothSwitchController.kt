@@ -5,7 +5,7 @@ package io.github.yoonseo6399.raspi
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
 import com.juul.kable.toIdentifier
-import io.github.yoonseo6399.IoTSwitch
+import io.github.yoonseo6399.iotModules.IoTSwitch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -62,12 +62,12 @@ class BluetoothSwitchController(
                 val connected = ensureConnected()
                 when (moduleType) {
                     ModuleType.LAMP -> {
-                        val lamp = connected.lamp.firstOrNull { it.number == number }
+                        val lamp = connected.lamps.firstOrNull { it.number == number }
                             ?: error("Lamp $number does not exist on ${configuration.id}.")
                         lamp.setState(state)
                     }
                     ModuleType.OUTLET -> {
-                        val outlet = connected.outlet.firstOrNull { it.number == number }
+                        val outlet = connected.outlets.firstOrNull { it.number == number }
                             ?: error("Outlet $number does not exist on ${configuration.id}.")
                         outlet.setState(state)
                     }
@@ -101,19 +101,18 @@ class BluetoothSwitchController(
         val advertisement = withTimeout(30.seconds) {
             Scanner {}.advertisements.first { it.identifier.toString() == configuration.bluetoothIdentifier }
         }
-        val connected = checkNotNull(
-            IoTSwitch.connect(configuration.bluetoothIdentifier.toIdentifier()) { Peripheral(advertisement) }
-        ) { "Could not connect to ${configuration.id}." }
+        val connected = IoTSwitch(configuration.bluetoothIdentifier.toIdentifier()) { Peripheral(advertisement) }
+        check(connected.connect()) { "Could not connect to ${configuration.id}." }
         switch = connected
         publishAvailability(true)
         return connected
     }
 
     private suspend fun publishStates(connected: IoTSwitch) {
-        connected.lamp.forEach { module ->
+        connected.lamps.forEach { module ->
             publishModuleState(ModuleType.LAMP, module.number, module.isOn.value)
         }
-        connected.outlet.forEach { module ->
+        connected.outlets.forEach { module ->
             publishModuleState(ModuleType.OUTLET, module.number, module.powerFlowState.value)
         }
     }

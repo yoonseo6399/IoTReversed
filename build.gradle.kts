@@ -1,5 +1,3 @@
-import org.gradle.internal.impldep.com.amazonaws.PredefinedClientConfigurations.defaultConfig
-
 plugins {
     kotlin("multiplatform") version "2.1.0"
     kotlin("plugin.serialization") version "2.1.0" apply false
@@ -15,7 +13,6 @@ repositories {
     google()
 }
 
-
 dependencies {
 
 }
@@ -25,20 +22,20 @@ kotlin {
         namespace = "io.github.yoonseo6399.iotswitch"
         compileSdk { version = release(36) }
     }
+
     macosX64()
     jvm()
 
     sourceSets {
         commonMain.dependencies {
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-            implementation("com.juul.kable:kable-core:0.42.0")
-            implementation(kotlin("reflect"))
-
+            api("com.juul.kable:kable-core:0.42.0")
+            api(kotlin("reflect"))
         }
 
         androidMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-            implementation("com.juul.kable:kable-default-permissions:0.42.0") // Optional
+            implementation("com.juul.kable:kable-default-permissions:0.42.0")
         }
     }
     jvmToolchain(21)

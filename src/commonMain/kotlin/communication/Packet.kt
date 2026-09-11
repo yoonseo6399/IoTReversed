@@ -1,14 +1,5 @@
 package io.github.yoonseo6399.communication
 
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
-
 data class Packet(val cmd : Command, val payload : ByteArray){
     constructor(cmd: Command, payload: CharArray) : this(cmd,payload.map { it.code.toByte() }.toByteArray())
     companion object {
@@ -59,7 +50,7 @@ data class Packet(val cmd : Command, val payload : ByteArray){
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (javaClass != other?.javaClass) return false
+        if (other !is Packet) return false
 
         other as Packet
 
@@ -74,149 +65,6 @@ data class Packet(val cmd : Command, val payload : ByteArray){
         result = 31 * result + payload.contentHashCode()
         return result
     }
-}
-
-class PacketFetchBuilder(
-    private val connection: DeviceConnection,
-    private val initialRequest: Packet
-) {
-    private val targetCommands = mutableMapOf<Command,Boolean>()
-    private var retryInterval = 1.seconds
-    private var maxRetries = 3
-    private var timeout = 2.seconds
-
-    fun fetch(cmd: Command, ack : Boolean = true) = apply { targetCommands.put(cmd,ack) }
-
-    fun retry(interval: Duration, count: Int) = apply {
-        retryInterval = interval
-        maxRetries = count
-    }
-
-    fun setTimeout(duration: Duration) = apply {
-        timeout = duration
-    }
-    /**warn this is not Async do not use it with other request**/
-    suspend fun execute(): Map<Command, Packet>? {
-        return connection.requestMutex.withLock {
-            executeSerialized()
-        }
-    }
-
-    private suspend fun executeSerialized(): Map<Command, Packet>? {
-        var currentRetry = 0
-
-        while (currentRetry <= maxRetries) {
-            val results = mutableMapOf<Command, Packet>()
-
-            try {
-                // 타임아웃 설정: 전체 fetch 과정이 너무 길어지면 끊음
-                withTimeout(timeout) {
-                    coroutineScope {
-                        // 1. 패킷 수집 시작 (요청 보내기 전부터 관찰 시작)
-                        val collectionJob = launch {
-                            connection.packets.collect { packet ->
-                                if (targetCommands.contains(packet.cmd)) {
-                                    results[packet.cmd] = packet
-                                    // ACK 전송 (기존 로직 유지)
-                                    if(targetCommands[packet.cmd] == true) connection.ack(packet)
-                                    // 모든 패킷을 다 모았다면 종료
-                                    if (results.keys.containsAll(targetCommands.keys)) {
-                                        cancel()
-                                    }
-                                }
-                            }
-                        }
-                        // 2. 초기 요청 전송
-                        connection.sendPacket(initialRequest)
-                        // 3. 수집 완료 대기
-                        collectionJob.join()
-                    }
-
-                }
-
-                // 성공적으로 모두 모았는지 확인
-                if (results.keys.containsAll(targetCommands.keys)) {
-                    return results
-                }
-            } catch (e: Exception) {
-                println("Fetch failed (attempt ${currentRetry + 1}): ${e.message}")
-                if (e is NoSuchElementException) {
-                    println("기기 상태 불일치 감지 - 재연결 시도")
-                    connection.peripheral.disconnect()
-                    connection.peripheral.connect() // 강제 재연결로 서비스 테이블 갱신
-                }
-            }
-
-            // 실패 시 재시도 전 대기
-            currentRetry++
-            if (currentRetry <= maxRetries) {
-                delay(retryInterval)
-                println("Retrying... $currentRetry")
-            }
-        }
-
-        return null // 끝내 실패한 경우
-    }
-}
-
-fun parsePowerValue(payload: ByteArray) : Int{
-    val rawHex = payload.take(8).joinToString("") { "%02x".format(it) }
-    println("Rx(CMD_REQ_STS_PWR): $rawHex")
-
-// Power Value 파싱
-    val p1 = (payload[4].toInt() shr 4) and 0x0F
-    val p2 = payload[4].toInt() and 0x0F
-    val p3 = (payload[5].toInt() shr 4) and 0x0F
-    val p4 = payload[5].toInt() and 0x0F
-
-    val strPowerVal = "%x%x%x%x".format(p1, p2, p3, p4)
-    return strPowerVal.toInt()
-}
-@OptIn(ExperimentalStdlibApi::class)
-fun uartRxParser(bArr: ByteArray): Packet? {
-    // 1. 최소 길이 확인 (헤더 5 + 체크섬 2 = 7바이트는 최소한 있어야 함)
-    if (bArr.size < 7) return null
-
-    val header1 = bArr[0].toInt() and 0xFF
-    val header2 = bArr[1].toInt() and 0xFF
-    val header3 = bArr[2].toInt() and 0xFF
-    val dataLength = bArr[4].toInt() and 0xFF // b6 역할
-    val cmd = bArr[3]
-    if(cmd == Command.Conc.Control.byte) {
-        println("W : cmd Conc, bypassing checksum")
-        return Command.fromByte(cmd)?.let { Packet(it, ByteArray(0)) }
-    }
-    // 2. 헤더 조건 검사 (0x7E, 0x10, 0x0F)
-    if (header1 != 0x7E || header2 != 0x10 || header3 != 0x0F) {
-        return null
-    }
-
-    // 3. 체크섬 계산 범위 설정
-    val payloadEndIdx = dataLength + 5
-    var xorChecksum = 0
-    var addChecksum = 0
-    var xorSum = 0
-    var addSum = 0
-    for (i in 0 until payloadEndIdx) {
-        val current = bArr[i].toInt() and 0xFF
-        xorSum = xorSum xor current
-        addSum = (addSum + current) and 0xFF
-    }
-
-    // 4. 체크섬 비교
-    val receivedXor = bArr[payloadEndIdx].toInt() and 0xFF
-    val receivedCombined = bArr[payloadEndIdx + 1].toInt() and 0xFF
-    val calculatedCombined = (addSum + xorSum) and 0xFF
-
-    if (xorSum != receivedXor || calculatedCombined != receivedCombined) {
-        println("ERR: Checksum Mismatch($xorSum,$calculatedCombined : $receivedXor,$receivedCombined) : ${bArr.toHexString()}")
-        return null
-    }
-
-    // 5. 실제 데이터 추출 (5번 인덱스부터 dataLength 만큼)
-    val data = bArr.sliceArray(5 until 5 + dataLength)
-
-    return Command.Companion.fromByte(cmd)?.let { Packet(it,data) }
 }
 
 /**

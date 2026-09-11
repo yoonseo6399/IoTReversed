@@ -15,21 +15,17 @@ val kitchin = "cca91665-c55d-2a4f-4fbc-b82a6875af20"
 fun Boolean.toByte(): Byte = if (this) 1 else 0
 @OptIn(ExperimentalStdlibApi::class)
 fun main() {
-    println("started")
     runBlocking {
         //val a = register().await()
         //println(a?.identifier)
         //return@runBlocking
-        val add = Scanner {
-            }.advertisements.first { it.identifier.toString() == uuid }
-        val switch = IoTSwitch.connect(uuid.toIdentifier(),{ Peripheral(add)}) ?: return@runBlocking
-        switch.lamp.first().flipState()
-        print("done")
+//        val switch = IoTSwitch.connect(uuid.toIdentifier()) ?: return@runBlocking
+//        switch.lamp.first().flipState()
 //
-        switch.outlet.first().flipState()
+//        switch.outlet.first().flipState()
 //
-        //switch.printUnhandled()
-        //delay(500)
+//        switch.printUnhandled()
+        delay(500)
 //        println(r)
 //        println("remainder")
 //        d.peripheral.scope.launch {
