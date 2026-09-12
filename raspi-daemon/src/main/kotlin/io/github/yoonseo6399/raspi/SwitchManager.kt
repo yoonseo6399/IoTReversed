@@ -6,7 +6,8 @@ import kotlinx.coroutines.sync.withLock
 
 class SwitchManager(
     private val mqtt: MqttGateway,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val discovery: BluetoothDiscovery
 ) {
     private val mutex = Mutex()
     private val controllers = mutableMapOf<String, BluetoothSwitchController>()
@@ -31,7 +32,8 @@ class SwitchManager(
                     topicRoot = configuration.topicRoot,
                     defaultPollIntervalSeconds = configuration.defaultPollIntervalSeconds,
                     mqtt = mqtt,
-                    scope = scope
+                    scope = scope,
+                    discovery = discovery
                 ).also {
                     controllers[device.id] = it
                     toStart += it
@@ -61,6 +63,15 @@ class SwitchManager(
         val state = payload.toSwitchState() ?: return false
         val controller = mutex.withLock { controllers[segments[0]] } ?: return false
         controller.setState(moduleType, number, state)
+        return true
+    }
+
+    /** Routes an explicit MQTT read request to a fresh, serialized BLE status transaction. */
+    suspend fun handleGetCommand(topicRoot: String, topic: String): Boolean {
+        val segments = topic.removePrefix("$topicRoot/").split('/')
+        if (!topic.startsWith("$topicRoot/") || segments.size != 3 || segments.drop(1) != listOf("status", "get")) return false
+        val controller = mutex.withLock { controllers[segments[0]] } ?: return false
+        controller.readStatus()
         return true
     }
 

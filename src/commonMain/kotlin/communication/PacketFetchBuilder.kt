@@ -1,11 +1,15 @@
 package io.github.yoonseo6399.communication
 
 import com.juul.kable.NotConnectedException
-import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -17,7 +21,7 @@ sealed class FetchException(message: String) : Exception(message) {
         FetchException("Unexpected packet: $cmd")
 }
 class PacketFetchBuilder(
-    private val connection: DeviceConnection,
+    private val connection: PacketTransport,
     private val initialRequest: Packet
 ) {
     private val targetCommands = mutableMapOf<Command,Boolean>()
@@ -36,9 +40,10 @@ class PacketFetchBuilder(
     fun setTimeout(duration: Duration) = apply {
         timeout = duration
     }
-    /**warn this is not Async do not use it with other request**/
-    @OptIn(FlowPreview::class)
-    suspend fun execute(): Map<Command, Packet> {
+    /** Subscribes before sending and completes after the final acknowledged response. */
+    suspend fun execute(): Map<Command, Packet> = connection.requestMutex.withLock {
+        connection.failure.value?.let { throw it }
+        require(targetCommands.isNotEmpty()) { "At least one response command is required" }
 
         repeat(maxRetries) { attempt ->
             val results = mutableMapOf<Command, Packet>()
@@ -47,23 +52,29 @@ class PacketFetchBuilder(
             try {
                 withTimeout(timeout) {
                     coroutineScope {
-                        connection.sendPacket(initialRequest)
-                        connection.packets
-                            .takeWhile { results.keys != targetCommands.keys }
-                            .collect { packet ->
-                                if (!targetCommands.contains(packet.cmd)) return@collect
+                        val failureWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                            throw connection.failure.filterNotNull().first()
+                        }
+                        val response = async(start = CoroutineStart.UNDISPATCHED) {
+                            connection.packets.first { packet ->
+                                if (!targetCommands.contains(packet.cmd)) return@first false
                                 if (results.containsKey(packet.cmd)) {
                                     duplication++
                                     if (duplication >= duplicationLimit) throw FetchException.DuplicationOverflow(packet.cmd)
                                 }
                                 results[packet.cmd] = packet
+                                results.keys == targetCommands.keys
                             }
+                        }
+                        connection.failure.value?.let { throw it }
+                        connection.sendPacket(initialRequest)
+                        response.await()
+                        failureWatcher.cancel()
                     }
                 }
 
-                // 성공
                 if (results.keys == targetCommands.keys) {
-                    return results
+                    return@withLock results
                 } else {
                     throw FetchException.ProtocolError(
                         targetCommands.keys.first { it !in results }
@@ -79,7 +90,6 @@ class PacketFetchBuilder(
                 delay(retryInterval)
 
             } catch (e: FetchException) {
-                // duplication / protocol error → 즉시 중단
                 throw e
             }
         }

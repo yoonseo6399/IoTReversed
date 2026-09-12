@@ -1,0 +1,13 @@
+{
+  "name": "homebridge-iot-reversed",
+  "version": "1.0.0",
+  "description": "Dynamic Homebridge accessories for the IoTReversed BLE MQTT daemon",
+  "main": "index.js",
+  "keywords": ["homebridge-plugin"],
+  "engines": {"node": ">=20", "homebridge": ">=1.8.0"},
+  "dependencies": {"mqtt": "^5.10.4"},
+  "scripts": {"test": "node --test"},
+  "files": ["index.js", "mqtt-gateway.js", "config.schema.json", "README.md"],
+  "license": "UNLICENSED",
+  "private": true
+}
