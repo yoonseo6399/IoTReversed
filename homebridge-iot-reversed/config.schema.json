@@ -1,0 +1,14 @@
+{
+  "pluginAlias": "IoTReversed",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "default": "IoTReversed"},
+      "topicRoot": {"type": "string", "default": "iot-hub"},
+      "mqttConfigPath": {"type": "string", "default": "/var/lib/homebridge/iot-mqtt.json"}
+    },
+    "required": ["mqttConfigPath"]
+  }
+}

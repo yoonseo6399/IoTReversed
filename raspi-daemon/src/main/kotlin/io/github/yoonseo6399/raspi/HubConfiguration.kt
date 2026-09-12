@@ -68,6 +68,18 @@ class DeviceRegistry(private val configurationPath: Path) {
         val current = _configuration.value
         val updatedDevices = current.devices.filterNot { it.id == device.id } + device
         val updated = current.copy(devices = updatedDevices.sortedBy(SwitchConfiguration::id))
+        updated.validate()
+        persist(updated)
+        _configuration.value = updated
+        updated
+    }
+
+    /** Adds a discovered device atomically without overwriting an existing room or MAC registration. */
+    suspend fun register(device: SwitchConfiguration): HubConfiguration = mutex.withLock {
+        val current = _configuration.value
+        require(current.devices.none { it.id == device.id }) { "Device id already registered" }
+        val updated = current.copy(devices = (current.devices + device).sortedBy(SwitchConfiguration::id))
+        updated.validate()
         persist(updated)
         _configuration.value = updated
         updated
@@ -109,6 +121,9 @@ fun HubConfiguration.validate() {
     }
     require(defaultPollIntervalSeconds > 0) { "defaultPollIntervalSeconds must be positive." }
     require(devices.map(SwitchConfiguration::id).distinct().size == devices.size) { "Device ids must be unique." }
+    val addresses = devices.map { bluetoothMac(it.bluetoothIdentifier) ?: it.bluetoothIdentifier }
+    require(addresses.distinct().size == addresses.size) { "Bluetooth identifiers must be unique." }
+    require(!topicRoot.contains('+') && !topicRoot.contains('#') && !topicRoot.contains('\u0000')) { "topicRoot cannot contain MQTT wildcards or NUL" }
     devices.forEach(SwitchConfiguration::validate)
 }
 

@@ -18,10 +18,15 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
 data class MqttEnvelope(val topic: String, val payload: String, val retained: Boolean)
 
+interface MqttPublisher {
+    suspend fun publish(topic: String, payload: String, retained: Boolean = false)
+}
+
 class MqttGateway(
     private val configuration: MqttConfiguration,
-    private val scope: CoroutineScope
-) : AutoCloseable {
+    private val scope: CoroutineScope,
+    private val topicRoot: String = "iot-hub"
+) : AutoCloseable, MqttPublisher {
     private val subscriptions = linkedSetOf<String>()
     private val subscriptionMutex = Mutex()
     private val _messages = MutableSharedFlow<MqttEnvelope>(
@@ -39,7 +44,10 @@ class MqttGateway(
     init {
         client.setCallback(object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String) {
-                scope.launch { restoreSubscriptions() }
+                scope.launch {
+                    restoreSubscriptions()
+                    publish("$topicRoot/availability", "online", retained = true)
+                }
             }
 
             override fun connectionLost(cause: Throwable?) = Unit
@@ -67,7 +75,7 @@ class MqttGateway(
         }
     }
 
-    suspend fun publish(topic: String, payload: String, retained: Boolean = false) {
+    override suspend fun publish(topic: String, payload: String, retained: Boolean) {
         check(client.isConnected) { "MQTT client is not connected." }
         withContext(Dispatchers.IO) {
             val message = MqttMessage(payload.encodeToByteArray()).apply {
@@ -89,7 +97,8 @@ class MqttGateway(
 
     private fun connectOptions() = MqttConnectOptions().apply {
         isAutomaticReconnect = true
-        isCleanSession = false
+        isCleanSession = true
+        setWill("$topicRoot/availability", "offline".encodeToByteArray(), 1, true)
         userName = configuration.username
         password = configuration.password?.toCharArray()
     }

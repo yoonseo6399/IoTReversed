@@ -3,6 +3,8 @@ package io.github.yoonseo6399.raspi
 import java.nio.file.Path
 import java.nio.file.Files
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
@@ -17,13 +19,23 @@ class RaspberryPiHub(private val configurationPath: Path) {
     private val registry = DeviceRegistry(configurationPath)
     private lateinit var mqtt: MqttGateway
     private lateinit var switchManager: SwitchManager
+    private lateinit var registration: DeviceRegistration
+    private val discovery = BluetoothDiscovery()
 
     suspend fun start() {
         val configuration = registry.load()
-        mqtt = MqttGateway(configuration.mqtt, scope)
-        switchManager = SwitchManager(mqtt, scope)
+        mqtt = MqttGateway(configuration.mqtt, scope, configuration.topicRoot)
+        switchManager = SwitchManager(mqtt, scope, discovery)
+        registration = DeviceRegistration(registry, discovery, mqtt)
         mqtt.start()
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            mqtt.messages.collect { message ->
+                if (!message.retained) scope.launch { handleMqttMessage(message) }
+            }
+        }
         mqtt.subscribe("${configuration.topicRoot}/+/+/+/set")
+        mqtt.subscribe("${configuration.topicRoot}/+/status/get")
+        mqtt.subscribe("${configuration.topicRoot}/registry/devices/register")
         mqtt.subscribe("${configuration.topicRoot}/registry/devices/upsert")
         mqtt.subscribe("${configuration.topicRoot}/registry/devices/remove")
         scope.launch {
@@ -36,12 +48,12 @@ class RaspberryPiHub(private val configurationPath: Path) {
                 )
             }
         }
-        scope.launch {
-            mqtt.messages.collect(::handleMqttMessage)
-        }
     }
 
     suspend fun stop() {
+        if (::mqtt.isInitialized) {
+            runCatching { mqtt.publish("${registry.configuration.value.topicRoot}/availability", "offline", retained = true) }
+        }
         if (::switchManager.isInitialized) {
             switchManager.stop()
         }
@@ -54,18 +66,23 @@ class RaspberryPiHub(private val configurationPath: Path) {
     private suspend fun handleMqttMessage(message: MqttEnvelope) {
         val configuration = registry.configuration.value
         val root = configuration.topicRoot
-        when (message.topic) {
+        try {
+          when (message.topic) {
+            "$root/registry/devices/register" -> registration.register(
+                hubJson.decodeFromString<RegistrationRequest>(message.payload)
+            )
             "$root/registry/devices/upsert" -> {
                 registry.upsert(hubJson.decodeFromString<SwitchConfiguration>(message.payload))
             }
             "$root/registry/devices/remove" -> registry.remove(message.payload.trim())
-            else -> {
-                runCatching {
-                    switchManager.handleSetCommand(root, message.topic, message.payload)
-                }.onFailure { error ->
-                    System.err.println("MQTT command ${message.topic}: ${error.message}")
-                }
+            else -> if (!switchManager.handleGetCommand(root, message.topic)) {
+                switchManager.handleSetCommand(root, message.topic, message.payload)
             }
+          }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            System.err.println("MQTT command ${message.topic}: ${error.message}")
         }
     }
 }
