@@ -21,13 +21,17 @@ class RaspberryPiHub(private val configurationPath: Path) {
     private lateinit var switchManager: SwitchManager
     private lateinit var registration: DeviceRegistration
     private val discovery = BluetoothDiscovery()
+    private var http: HttpGateway? = null
 
     suspend fun start() {
         val configuration = registry.load()
         mqtt = MqttGateway(configuration.mqtt, scope, configuration.topicRoot)
         switchManager = SwitchManager(mqtt, scope, discovery)
         registration = DeviceRegistration(registry, discovery, mqtt)
+        http = HttpGateway.configured(switchManager)
         mqtt.start()
+        switchManager.reconcile(configuration)
+        http?.start()
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             mqtt.messages.collect { message ->
                 if (!message.retained) scope.launch { handleMqttMessage(message) }
@@ -51,6 +55,8 @@ class RaspberryPiHub(private val configurationPath: Path) {
     }
 
     suspend fun stop() {
+        http?.stop()
+        http = null
         if (::mqtt.isInitialized) {
             runCatching { mqtt.publish("${registry.configuration.value.topicRoot}/availability", "offline", retained = true) }
         }

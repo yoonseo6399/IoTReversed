@@ -1,9 +1,6 @@
 package io.github.yoonseo6399.raspi
 
-import com.juul.kable.Peripheral
 import io.github.yoonseo6399.communication.FetchException
-import io.github.yoonseo6399.iotModules.IoTSwitch
-import io.github.yoonseo6399.iotModules.IoTSwitchState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -12,7 +9,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -23,6 +20,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlin.time.Duration.Companion.seconds
+import java.time.Instant
 
 enum class ModuleType(val topicSegment: String) {
     LAMP("lamp"),
@@ -44,17 +42,22 @@ class BluetoothSwitchController(
     val configuration: SwitchConfiguration,
     private val topicRoot: String,
     private val defaultPollIntervalSeconds: Long,
-    private val mqtt: MqttGateway,
+    private val mqtt: MqttPublisher,
     private val scope: CoroutineScope,
-    private val discovery: BluetoothDiscovery
+    private val discovery: BluetoothDiscovery,
+    private val createSession: suspend () -> SwitchSession = { discoverSwitchSession(configuration, discovery) }
 ) {
     private val stateMutex = Mutex()
-    private var switch: IoTSwitch? = null
+    private var switch: SwitchSession? = null
     private var monitor: Job? = null
     private var panicWatcher: Job? = null
     @Volatile private var panicked = false
     @Volatile private var halted = false
     private var consecutiveFailures = 0
+    @Volatile private var currentSnapshot = DeviceSnapshot(configuration.id, configuration.displayName)
+
+    /** Returns diagnostic and last-observed state without initiating BLE traffic. */
+    fun snapshot(): DeviceSnapshot = currentSnapshot
 
     /** Starts one status monitor for this device. */
     fun start() {
@@ -71,96 +74,110 @@ class BluetoothSwitchController(
     }
 
     /** Executes a serialized control request and publishes only an acknowledged result. */
-    suspend fun setState(moduleType: ModuleType, number: Int, state: Boolean) {
+    suspend fun setState(moduleType: ModuleType, number: Int, state: Boolean): StateResponse {
         require(number > 0) { "Module number must be positive." }
-        try {
-            stateMutex.withLock {
-                check(!halted) { "Device ${configuration.id} is halted; inspect it before restarting." }
+        return stateMutex.withLock {
+            try {
+                requireRunning()
                 val connected = ensureConnected()
-                val success = when (moduleType) {
-                    ModuleType.LAMP -> connected.lamps.firstOrNull { it.number == number }?.setState(state)
-                    ModuleType.OUTLET -> connected.outlets.firstOrNull { it.number == number }?.setState(state)
-                }
-                check(success == true) { "Control was not acknowledged for ${configuration.id}." }
+                currentSnapshot.module(moduleType, number)
+                val success = connected.set(moduleType, number, state)
+                if (success != true) throw DeviceApiException(504, "Control was not acknowledged")
+                currentSnapshot = currentSnapshot.copy(modules = currentSnapshot.modules.map {
+                    if (it.type == moduleType.topicSegment && it.number == number) it.copy(on = state) else it
+                })
                 publishModuleState(moduleType, number, state)
+                currentSnapshot.module(moduleType, number, acknowledged = true)
+            } catch (error: Throwable) {
+                handleFailure(error)
+                throw error
             }
-        } catch (error: Throwable) {
-            handleFailure(error)
-            throw error
         }
     }
 
     /** Reads a fresh full BLE status sequence without changing any output. */
     suspend fun readStatus() {
-        try {
-            stateMutex.withLock {
-                check(!halted) { "Device ${configuration.id} is halted; inspect it before restarting." }
-                val alreadyConnected = switch != null
+        stateMutex.withLock {
+            try {
+                requireRunning()
+                val previous = switch
                 val connected = ensureConnected()
-                if (alreadyConnected) connected.refreshStatus()
+                if (previous === connected) connected.refresh()
                 publishStates(connected)
                 consecutiveFailures = 0
+            } catch (error: Throwable) {
+                handleFailure(error)
+                throw error
             }
-        } catch (error: Throwable) {
-            handleFailure(error)
-            throw error
         }
     }
 
-    /** Polls until cancelled or stopped by a protocol fault or three consecutive failures. */
+    /** Recovers ordinary failures with capped backoff; only panic or shutdown stops monitoring. */
     private suspend fun monitorDevice() {
         val interval = (configuration.pollIntervalSeconds ?: defaultPollIntervalSeconds).seconds
         while (currentCoroutineContext().isActive && !halted) {
             try {
                 readStatus()
+            } catch (error: TimeoutCancellationException) {
+                if (!currentCoroutineContext().isActive) throw error
             } catch (error: CancellationException) {
-                throw error
+                if (!currentCoroutineContext().isActive) throw error
             } catch (_: Exception) {
             }
-            delay(interval)
+            if (!halted) delay(if (consecutiveFailures == 0) interval else
+                (interval * (1 shl consecutiveFailures)).coerceAtMost(60.seconds))
         }
     }
 
     /** Serializes scan/connect and retains failed candidates so every native session is closed. */
-    private suspend fun ensureConnected(): IoTSwitch {
-        switch?.let { return it }
+    private suspend fun ensureConnected(): SwitchSession {
+        switch?.let {
+            if (it.ready) return it
+            System.err.println("BLE ${configuration.id}: replacing unavailable session; failure=${it.failure.value?.javaClass?.simpleName}")
+            releaseConnection()
+            publishAvailability("offline")
+            requireRunning()
+        }
         return discovery.exclusive {
-            val expected = bluetoothMac(configuration.bluetoothIdentifier)
-            val advertisement = find {
-                if (expected != null) bluetoothMac(it.identifier.toString()) == expected
-                else it.identifier.toString() == configuration.bluetoothIdentifier
-            }
-            println("BLE ${configuration.id}: matched ${bluetoothMac(advertisement.identifier.toString())}")
-            val connected = IoTSwitch(advertisement.identifier) { Peripheral(advertisement) }
+            val connected = createSession()
             switch = connected
             panicWatcher = scope.launch {
-                connected.connection.failure.filterIsInstance<FetchException.DuplicationOverflow>().first()
-                markPanicked()
-            }
-            withTimeout(25.seconds) {
-                if (!connected.connect()) {
-                    val state = connected.state.value
-                    if (state is IoTSwitchState.Error) throw state.throwable
-                    error("Could not connect to ${configuration.id}.")
+                val failure = connected.failure.filterNotNull().first()
+                if (failure is FetchException.DuplicationOverflow) {
+                    markPanicked()
+                    scope.launch {
+                        stateMutex.withLock { if (switch === connected) releaseConnection() }
+                    }
+                } else {
+                    currentSnapshot = currentSnapshot.copy(lastError = "${failure::class.simpleName}: ${failure.message}")
+                    publishAvailability("offline")
+                    System.err.println("BLE ${configuration.id}: session unavailable; reconnect on next request or poll")
                 }
             }
+            withTimeout(25.seconds) {
+                connected.connect()
+            }
+            requireRunning()
             mqtt.publish(
                 "$topicRoot/${configuration.id}/discovery",
                 hubJson.encodeToString(DeviceDescription(
                     configuration.id, configuration.displayName,
-                    connected.lamps.map { ModuleDescription("lamp", it.number) } +
-                        connected.outlets.map { ModuleDescription("outlet", it.number) }
+                    connected.modules.map { ModuleDescription(it.type, it.number) }
                 )), retained = true
             )
+            publishStates(connected)
             publishAvailability("online")
             connected
         }
     }
 
     /** Publishes authoritative lamp and outlet states from the completed BLE response. */
-    private suspend fun publishStates(connected: IoTSwitch) {
-        connected.lamps.forEach { publishModuleState(ModuleType.LAMP, it.number, it.isOn.value) }
-        connected.outlets.forEach { publishModuleState(ModuleType.OUTLET, it.number, it.powerFlowState.value) }
+    private suspend fun publishStates(connected: SwitchSession) {
+        currentSnapshot = currentSnapshot.copy(
+            modules = connected.modules,
+            observedAt = Instant.now().toString(), lastError = null
+        )
+        connected.modules.forEach { publishModuleState(ModuleType.fromTopicSegment(it.type)!!, it.number, it.on) }
     }
 
     /** Publishes one retained Homebridge state. */
@@ -173,26 +190,27 @@ class BluetoothSwitchController(
     private suspend fun markPanicked() {
         panicked = true
         halted = true
+        currentSnapshot = currentSnapshot.copy(availability = "panicked", halted = true, lastError = "Repeated protocol packets")
         publishAvailability("panicked")
         System.err.println("BLE ${configuration.id}: PROTOCOL_HALTED; availability=panicked")
     }
 
-    /** Stops incomplete protocol exchanges and bounds retries of ordinary connection failures. */
+    /** Cleans up the failing session under the caller's lock without disabling recovery for ordinary errors. */
     private suspend fun handleFailure(error: Throwable) {
-        if (error is CancellationException && error !is TimeoutCancellationException) throw error
-        stateMutex.withLock {
-            if (error is FetchException.DuplicationOverflow) markPanicked()
-            if (error is FetchException && error !is FetchException.Disconnected) halted = true
-            consecutiveFailures++
-            if (consecutiveFailures >= 3) halted = true
-            releaseConnection()
-        }
+        if (error is CancellationException && !currentCoroutineContext().isActive) throw error
+        if (error is DeviceApiException && error.status != 504) return
+        if (error is FetchException.DuplicationOverflow) markPanicked()
+        consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(3)
+        currentSnapshot = currentSnapshot.copy(lastError = "${error::class.simpleName}: ${error.message}", halted = halted)
+        System.err.println("BLE controller ${configuration.id}: ${error::class.simpleName}: ${error.message}; before cleanup; halted=$halted")
+        releaseConnection()
         publishAvailability("offline")
-        System.err.println("BLE controller ${configuration.id}: ${error::class.simpleName}: ${error.message}; halted=$halted")
+        System.err.println("BLE ${configuration.id}: cleanup complete; reconnect=${!halted}; halted=$halted")
     }
 
     /** Disposes failed and completed sessions even while a coroutine is being cancelled. */
     private suspend fun releaseConnection() = withContext(NonCancellable) {
+        if (switch?.failure?.value is FetchException.DuplicationOverflow && !panicked) markPanicked()
         panicWatcher?.cancelAndJoin()
         panicWatcher = null
         val connected = switch
@@ -210,6 +228,7 @@ class BluetoothSwitchController(
 
     /** Keeps panicked retained instead of overwriting it with offline during shutdown. */
     private suspend fun publishAvailability(value: String) {
+        currentSnapshot = currentSnapshot.copy(availability = if (panicked) "panicked" else value, halted = halted)
         try {
             mqtt.publish("$topicRoot/${configuration.id}/availability",
                 if (panicked) "panicked" else value, retained = true)
@@ -217,5 +236,11 @@ class BluetoothSwitchController(
             if (error is CancellationException) throw error
             System.err.println("MQTT availability ${configuration.id}: ${error.message}")
         }
+    }
+
+    /** Keeps HTTP and MQTT callers from reconnecting a panicked device. */
+    private fun requireRunning() {
+        if (halted) throw DeviceApiException(if (panicked) 409 else 503,
+            currentSnapshot.lastError ?: "Device is halted; inspect before restarting")
     }
 }

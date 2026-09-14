@@ -43,6 +43,24 @@ ldd /opt/iot-reversed/lib/libbtleplug_ffi.so
 sudo journalctl -u iot-reversed -n 100 --no-pager
 ```
 
+## HTTP API and deployment
+
+From the repository root, `bash raspi-daemon/scripts/deploy-rpi.sh --apply` builds/tests the JVM distribution and installs it over SSH. `--host pi@<address>` overrides the target. Use `--skip-serve` when updating the daemon without changing Tailscale Serve. SSH authentication is interactive; no credentials belong in the script. The installer preserves `devices.json`, the Pi-built native BLE library and any existing HTTP token, and keeps a separate previous distribution for each deployment.
+
+HTTP is enabled by `IOT_HTTP_TOKEN_FILE=/etc/iot-reversed/http-token`, with `IOT_HTTP_PORT=8080` by default. It binds only to `127.0.0.1`. Every route requires `Authorization: Bearer <token>`. Tailscale Serve can expose the API privately to the tailnet after its initial account approval; it does not configure public Funnel access.
+
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/v1/devices` | Current registry and cached diagnostics |
+| GET | `/v1/devices/{id}` | Cached availability, modules, last error and observation time |
+| GET | `/v1/devices/{id}/lamps/{number}/state` | Cached lamp state; `?fresh=true` reads BLE |
+| GET | `/v1/devices/{id}/outlets/{number}/state` | Equivalent outlet state |
+| POST | Either module state path | Explicit `{"on":true,"requestId":"unique-id"}` command |
+
+Routes resolve the live controller registry, so MQTT registration/removal immediately changes the available HTTP devices. Module reads reject offline devices with 503 and panicked devices with 409. Diagnostic routes can return 200 for an offline device: check `availability` and `halted`, not just the HTTP status. `observedAt` is the last completed full status read; a control response's `acknowledged` flag denotes a received command acknowledgement.
+
+An optional request ID deduplicates identical HTTP commands for ten minutes (up to 256 entries, in memory). Reusing an ID for different parameters returns 409. A failed command is not automatically replayed after reconnection. For iPhone Shortcuts, use the private Tailscale HTTPS URL with the bearer header and a JSON boolean `on` value.
+
 ## MQTT contract
 
 For a device ID `living-room`, lamp 1 uses these retained state and command topics:
@@ -66,7 +84,9 @@ Executable MQTT requests must not be retained. Retained commands are ignored; cl
 
 One adapter mutex serializes registration scanning and device scan/connect. A short settling interval follows native scan cancellation. Every failed candidate is disconnected and closed, releasing native callbacks and module collectors. Notification subscription must finish before the first request is sent.
 
-The receiver owns ACKs and acknowledges duplicates before exposing packets to callers. `PacketFetchBuilder` subscribes before transmitting, does not replay previous transactions, serializes requests, and finishes on the final expected packet without needing another packet. Full-status requests are not automatically resent on timeout: an incomplete exchange stops the controller pending inspection. Ordinary connection failures are limited to three consecutive failures per controller run.
+The receiver owns ACKs and acknowledges duplicates before exposing packets to callers. `PacketFetchBuilder` subscribes before transmitting, does not replay previous transactions, serializes requests, and finishes on the final expected packet without needing another packet. A full-status timeout closes the failed session before the monitor attempts a new connection. Ordinary disconnections, timeouts, and cancelled native sessions publish `offline` without stopping the monitor. Repeated failures increase the polling delay up to 60 seconds; a successful status read resets it. A failed control command is reported to its caller and is never automatically replayed.
+
+Before a request, the controller checks the cached session's live connection state, failure and coroutine scope. An unavailable session is disconnected and closed, then replaced with a new Peripheral. Failure handling runs under the same mutex as the request so a delayed failure cannot dispose a newer connection. Logs print the triggering error before cleanup, followed by whether reconnection remains enabled.
 
 Logs include device identifier, connection phase, RX command, payload hex, consecutive repetition count and ACK completion. Six identical packets in a row with less than two seconds between packets trigger a panic. The conservative transaction duplicate limit also triggers a panic if too many duplicates prevent completing a response. Ordinary two-packet retransmissions that progress through the status sequence are accepted.
 

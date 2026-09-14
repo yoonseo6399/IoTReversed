@@ -24,6 +24,7 @@ fun uartRxParser(bArr: ByteArray): Packet? {
     val header3 = bArr[2].toInt() and 0xFF
     val dataLength = bArr[4].toInt() and 0xFF // b6 역할
     val cmd = bArr[3]
+    if (header1 != 0x7E || header2 != 0x10 || header3 != 0x0F || dataLength > 13 || bArr.size < dataLength + 7) return null
     if(cmd == Command.Conc.Control.byte) {
         println("W : cmd Conc, bypassing checksum")
         return Command.fromByte(cmd)?.let { Packet(it, ByteArray(0)) }
