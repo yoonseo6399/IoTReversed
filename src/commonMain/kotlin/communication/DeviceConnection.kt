@@ -49,6 +49,7 @@ class DeviceConnection(identifier: Identifier, peripheralProvider: (Identifier) 
     private val _failure = MutableStateFlow<Throwable?>(null)
     private val writeMutex = Mutex()
     private val diagnostics = PacketDiagnostics()
+    private val decoder = UartFrameDecoder()
     private val rxCharacteristic = characteristicOf(RX_SERVICE_UUID, RX_CHAR_UUID)
     private val txCharacteristic = characteristicOf(RX_SERVICE_UUID, TX_CHAR_UUID)
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -73,19 +74,21 @@ class DeviceConnection(identifier: Identifier, peripheralProvider: (Identifier) 
             receiver = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 try {
                     peripheral.observe(txCharacteristic) { subscribed.complete(Unit) }.collect { bytes ->
-                        val packet = uartRxParser(bytes)
-                        if (packet == null) {
-                            println("BLE [$label] RX malformed=${bytes.toHexString()}")
-                            return@collect
+                        val previousResyncs = decoder.resynchronizations
+                        val decoded = decoder.receive(bytes)
+                        if (decoder.resynchronizations != previousResyncs) {
+                            println("BLE [$label] RX resynchronized=${decoder.resynchronizations} raw=${bytes.toHexString()}")
                         }
-                        val repeated = diagnostics.receive(packet)
-                        if (packet.cmd.ack) ack(packet)
-                        println("BLE [$label] RX cmd=${packet.cmd.byte} payload=${packet.payload.toHexString()} repeat=${diagnostics.repetitions} ack=${packet.cmd.ack}")
-                        if (repeated && _failure.value == null) {
-                            _failure.value = FetchException.DuplicationOverflow(packet.cmd)
-                            println("BLE [$label] PROTOCOL_HALTED repeated packet; no further requests")
+                        for (packet in decoded) {
+                            val repeated = diagnostics.receive(packet)
+                            if (packet.cmd.ack) ack(packet)
+                            println("BLE [$label] RX cmd=${packet.cmd.byte} payload=${packet.payload.toHexString()} repeat=${diagnostics.repetitions} ack=${packet.cmd.ack}")
+                            if (repeated && _failure.value == null) {
+                                _failure.value = FetchException.DuplicationOverflow(packet.cmd)
+                                println("BLE [$label] PROTOCOL_HALTED repeated packet; no further requests")
+                            }
+                            received.emit(packet)
                         }
-                        received.emit(packet)
                     }
                 } catch (error: CancellationException) {
                     throw error

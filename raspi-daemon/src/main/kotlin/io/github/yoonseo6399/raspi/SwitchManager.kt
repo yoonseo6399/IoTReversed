@@ -8,9 +8,30 @@ class SwitchManager(
     private val mqtt: MqttGateway,
     private val scope: CoroutineScope,
     private val discovery: BluetoothDiscovery
-) {
+) : DeviceApi {
     private val mutex = Mutex()
     private val controllers = mutableMapOf<String, BluetoothSwitchController>()
+
+    /** Uses the current registry-backed controllers for HTTP discovery and diagnostic status. */
+    override suspend fun devices(): List<DeviceSnapshot> = mutex.withLock {
+        controllers.values.map { it.snapshot() }.sortedBy { it.id }
+    }
+
+    /** Resolves the current device on each request so additions and removals need no route rebuild. */
+    private suspend fun controller(id: String): BluetoothSwitchController = mutex.withLock {
+        controllers[id] ?: throw DeviceApiException(404, "Unknown device: $id")
+    }
+
+    /** Optionally refreshes BLE status while preserving cached diagnostics for offline devices. */
+    override suspend fun status(id: String, fresh: Boolean): DeviceSnapshot {
+        val controller = controller(id)
+        if (fresh) controller.readStatus()
+        return controller.snapshot()
+    }
+
+    /** Shares the existing controller mutex and ACK protocol with MQTT control requests. */
+    override suspend fun set(id: String, type: ModuleType, number: Int, on: Boolean): StateResponse =
+        controller(id).setState(type, number, on)
 
     suspend fun reconcile(configuration: HubConfiguration) {
         val toStop = mutableListOf<BluetoothSwitchController>()

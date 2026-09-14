@@ -6,6 +6,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
@@ -82,6 +84,7 @@ class PacketFetchBuilder(
                 }
 
             } catch (e: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
                 if (attempt == maxRetries - 1) throw FetchException.Timeout()
                 delay(retryInterval)
 

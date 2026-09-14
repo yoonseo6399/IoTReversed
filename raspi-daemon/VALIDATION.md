@@ -1,5 +1,21 @@
 # Raspberry Pi validation — 2026-09-12
 
+## Reconnection follow-up — 2026-09-14
+
+Attempt branch: `raspi-reconnect-fix-1`. The previous HTTP deployment remained alive with `availability=offline`, `halted=true`, and `lastError=Timeout: Fetch timeout`. At 13:28:47 Pi local time, no decoded command 52 appeared, although commands 65–68 continued to arrive and were acknowledged. Cleanup ended at 13:28:57. The original notification loss remains undetermined; it is not evidence of a hardware panic.
+
+The controller now validates the cached session before reuse, replaces disconnected/cancelled sessions, and keeps monitoring after ordinary errors with backoff capped at 60 seconds. Only a repeated-packet panic latches recovery off and closes the connection. Request failure cleanup holds the request mutex, preventing an old failure from closing a newer session. Failed control commands are not replayed. Error logs precede cleanup so a cleanup-generated disconnection is distinguishable from the triggering failure.
+
+- 19 local Kotlin tests passed, including five controller tests using fake BLE sessions: dead-session replacement, recovery after more than three connection failures, failed-write recovery without replay, session cancellation/timeout recovery, and panic shutdown without reconnect.
+- Installed the tested JVM distribution on the Pi, retaining its native ARM library and private configuration. Previous distribution: `/opt/iot-reversed.previous.20260914T141907-6230`.
+- At 15:19:23 Pi local time, the new process encountered a real 10-second notification-subscription timeout and logged `halted=false`, then `reconnect=true` after cleanup.
+- At 15:20:06–07, the same process automatically reconnected and completed the full status sequence. PID stayed `6292`; systemd `NRestarts=0`.
+- Cached authenticated HTTP GET returned `availability=online`, `halted=false`, `lastError=null`, and lamp 1 ON with a subsequent fresh polling timestamp. Verification sent no output-control commands.
+- No panic occurred during this observation. Real mid-command radio disconnection was not deliberately induced; that path is covered by the fake-session tests. This is bounded validation, not proof that notification corruption cannot recur.
+- Tailscale Serve was not changed by this follow-up deployment.
+
+The remaining sections describe the earlier deployment, not the current recovery policy.
+
 Attempt branch: `raspi-daemon-fix-1`. Target branch: `raspi-daemon`.
 
 ## Baseline and change
