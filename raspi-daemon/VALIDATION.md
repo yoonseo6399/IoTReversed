@@ -1,5 +1,15 @@
 # Raspberry Pi validation — 2026-09-12
 
+## Shared registration protocol — 2026-09-16 KST
+
+HTTP `POST /{topicRoot}/registry/devices/register` and MQTT `{topicRoot}/registry/devices/register` now call the same registration service. `/v1/registry/devices/register` is an HTTP alias. Requests accept name (legacy room alias), ID, request ID and polling interval. The service calls the coroutine-based `IoTSwitch.findNewDevice` overload under the adapter lock, excluding known addresses, and persists the discovered MAC with the supplied device settings.
+
+- All 23 Kotlin tests passed, including four new protocol tests for authenticated HTTP registration, shared MQTT result/deduplication, configuration/credential preservation, dynamic HTTP lookup, conflicting/invalid requests, concurrent registration, missing devices, broker failure, duplicate MAC protection and caller cancellation.
+- Deployed and restarted the Pi daemon; PID `35529`, systemd `NRestarts=0`. Pi journal at September 15 17:21:50 BST reports the loopback HTTP listener and at 17:21:52 reports BLE Connected.
+- Authenticated GET `/v1/devices` returned HTTP 200 with the existing device online, halted=false, lastError=null and lamp OFF. GET on both registration routes returned 405, confirming the POST-only routes were loaded.
+- Real new-device registration was not performed: no intended pairing device/name was supplied. No output-control requests were sent. Actual persistence and cross-transport behavior were exercised with a fake scanner, not claimed as live hardware registration.
+- Tailscale Serve remains unconfigured; remote HTTPS access was not changed by this deployment.
+
 ## Reconnection follow-up — 2026-09-14
 
 Attempt branch: `raspi-reconnect-fix-1`. The previous HTTP deployment remained alive with `availability=offline`, `halted=true`, and `lastError=Timeout: Fetch timeout`. At 13:28:47 Pi local time, no decoded command 52 appeared, although commands 65–68 continued to arrive and were acknowledged. Cleanup ended at 13:28:57. The original notification loss remains undetermined; it is not evidence of a hardware panic.

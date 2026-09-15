@@ -28,7 +28,7 @@ class RaspberryPiHub(private val configurationPath: Path) {
         mqtt = MqttGateway(configuration.mqtt, scope, configuration.topicRoot)
         switchManager = SwitchManager(mqtt, scope, discovery)
         registration = DeviceRegistration(registry, discovery, mqtt)
-        http = HttpGateway.configured(switchManager)
+        http = HttpGateway.configured(switchManager, registration, configuration.topicRoot)
         mqtt.start()
         switchManager.reconcile(configuration)
         http?.start()
@@ -39,7 +39,7 @@ class RaspberryPiHub(private val configurationPath: Path) {
         }
         mqtt.subscribe("${configuration.topicRoot}/+/+/+/set")
         mqtt.subscribe("${configuration.topicRoot}/+/status/get")
-        mqtt.subscribe("${configuration.topicRoot}/registry/devices/register")
+        mqtt.subscribe("${configuration.topicRoot}/$REGISTRATION_PATH")
         mqtt.subscribe("${configuration.topicRoot}/registry/devices/upsert")
         mqtt.subscribe("${configuration.topicRoot}/registry/devices/remove")
         scope.launch {
@@ -74,8 +74,8 @@ class RaspberryPiHub(private val configurationPath: Path) {
         val root = configuration.topicRoot
         try {
           when (message.topic) {
-            "$root/registry/devices/register" -> registration.register(
-                hubJson.decodeFromString<RegistrationRequest>(message.payload)
+            "$root/$REGISTRATION_PATH" -> registration.register(
+                kotlinx.serialization.json.Json.decodeFromString<RegistrationRequest>(message.payload)
             )
             "$root/registry/devices/upsert" -> {
                 registry.upsert(hubJson.decodeFromString<SwitchConfiguration>(message.payload))

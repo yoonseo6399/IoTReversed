@@ -56,6 +56,8 @@ HTTP is enabled by `IOT_HTTP_TOKEN_FILE=/etc/iot-reversed/http-token`, with `IOT
 | GET | `/v1/devices/{id}/lamps/{number}/state` | Cached lamp state; `?fresh=true` reads BLE |
 | GET | `/v1/devices/{id}/outlets/{number}/state` | Equivalent outlet state |
 | POST | Either module state path | Explicit `{"on":true,"requestId":"unique-id"}` command |
+| POST | `/{topicRoot}/registry/devices/register` | Search and register using the MQTT registration path and JSON payload |
+| POST | `/v1/registry/devices/register` | Alias for the same registration operation |
 
 Routes resolve the live controller registry, so MQTT registration/removal immediately changes the available HTTP devices. Module reads reject offline devices with 503 and panicked devices with 409. Diagnostic routes can return 200 for an offline device: check `availability` and `halted`, not just the HTTP status. `observedAt` is the last completed full status read; a control response's `acknowledged` flag denotes a received command acknowledgement.
 
@@ -92,19 +94,25 @@ Logs include device identifier, connection phase, RX command, payload hex, conse
 
 A panic publishes retained `panicked` to the device availability topic and blocks further reads, writes and reconnects. Shutdown preserves this state instead of overwriting it with `offline`. Inspect the physical device and reboot it if necessary before explicitly restarting the daemon. The in-process panic latch is reset by daemon restart; do not restart automatically to clear a suspected device loop.
 
-### Register a pairing device using its room name
+### Register a pairing device over HTTP or MQTT
 
 Subscribe to `iot-hub/registry/devices/register/result`, then send a non-retained JSON request:
 
 ```json
-{"room":"침실","requestId":"bedroom-001","id":"bedroom"}
+{"name":"침실 전등","requestId":"bedroom-001","id":"bedroom","pollIntervalSeconds":30}
 ```
 
-Publish this to `iot-hub/registry/devices/register`. `id` is optional; omission generates a stable `switch-<mac>` ID. `room` and `requestId` are required. Use a new request ID for each intentional attempt. Up to 100 completed request IDs are remembered during a daemon run to avoid repeating a QoS redelivery.
+Publish this to `iot-hub/registry/devices/register`, or send the same JSON to `POST /iot-hub/registry/devices/register` with `Authorization: Bearer <token>` and `Content-Type: application/json`. The prefix follows the configured `topicRoot`; the `/v1/registry/devices/register` HTTP alias is also available. Existing lamp/outlet control paths remain unchanged; only registration uses this identical MQTT/HTTP path convention.
 
-The Android `IotHub/RegisterActivity.kt` registration flow finds names beginning with `Clio_UART.` or `Clio_UART [Clio_UART.]` and stores the identifier with a room name; it does not send a separate BLE pairing or room-programming command. The daemon follows the same procedure, excluding already registered MACs. Put only the intended new device in registration mode. Scanning expires after 15 seconds once the adapter is available.
+`name` (1–100 characters) and `requestId` are required. The existing `room` field remains an alias for `name`; if both are supplied they must match. `id` is optional; omission generates a stable `switch-<mac>` ID. `pollIntervalSeconds` is optional, between 1 and 86400; omission uses the daemon default. These are device settings, not broker credentials. The MAC is discovered, not provided by the client.
 
-Results include the request ID and `waiting`, `registered`, `not_found`, `busy` or `error`. `registered` means the room/MAC was persisted; successful BLE initialization is separately reported by `online` and the module discovery topic. MQTT credentials remain intact when `devices.json` is atomically updated. Duplicate MACs and duplicate registration IDs cannot overwrite another device.
+Use a new request ID for each intentional attempt. HTTP and MQTT share the last 100 completed request IDs during a daemon run: identical requests return the previous result without another scan, and different settings with the same ID return `conflict`. Concurrent registrations return `busy`. A client disconnect cancels scanning; once persistence starts it finishes and remembers the result to prevent duplicate registration on retry. The cache is not persisted across daemon restarts, so inspect the registry before retrying after a restart.
+
+The shared `IoTSwitch.findNewDevice` searches names beginning with `Clio_UART.` or `Clio_UART [Clio_UART.]`; the daemon supplies a predicate excluding already registered MACs. Discovery shares the BLE adapter mutex with connection setup and uses the caller's coroutine for cancellation. Put only the intended new device in registration mode. Scanning expires after 15 seconds once the adapter is available, with a 30-second overall limit on discovery including adapter wait. Registration stores the name and discovered identifier locally; it does not send a separate device-side room-programming command.
+
+MQTT results use `iot-hub/registry/devices/register/result` and include `waiting` progress followed by a final result. HTTP waits for the final JSON result: `registered` (201), `not_found` (404), `busy`/`conflict` (409), `invalid` (400), or `error` (503). HTTP registration results are also published to MQTT when the broker is available; MQTT publication failure does not undo a saved registration.
+
+`registered` means the name/MAC/settings were persisted; successful BLE initialization is separately reported by `online` and the module discovery topic. The registry flow starts the controller and updates HTTP device routes and Homebridge discovery without restart. MQTT credentials remain intact when `devices.json` is atomically updated. Duplicate MACs and duplicate registration IDs cannot overwrite another device.
 
 ### Automatic Homebridge accessories
 
