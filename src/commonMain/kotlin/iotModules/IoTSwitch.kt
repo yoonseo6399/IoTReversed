@@ -10,13 +10,12 @@ import io.github.yoonseo6399.communication.DeviceStatus
 import io.github.yoonseo6399.communication.FetchException
 import io.github.yoonseo6399.communication.registrationScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.ExperimentalUuidApi
 
@@ -46,24 +45,21 @@ class IoTSwitch(
 
     val state: StateFlow<IoTSwitchState> = _state.asStateFlow()
     companion object {
-        fun findNewDevice() : Deferred<Advertisement?> {
-            return registrationScope.async {
-                try {
-                    withTimeout((15).seconds) {  Scanner {
-                        filters {
-                            match {
-                                name = Filter.Name.Prefix("Clio_UART [Clio_UART.]")
-                            }
-                            match {
-                                name = Filter.Name.Prefix("Clio_UART.")
-                            }
-                        }
-                    }.advertisements.first() }
-                } catch (e : TimeoutCancellationException){
-                    null
-                }
-            }
+        /** Preserves the existing Deferred API for Android callers. */
+        fun findNewDevice(): Deferred<Advertisement?> = registrationScope.async {
+            findNewDevice(matches = { true })
         }
+
+        /** Finds a pairing advertisement in the caller's coroutine, excluding devices rejected by the predicate. */
+        suspend fun findNewDevice(matches: (Advertisement) -> Boolean, timeoutSeconds: Long = 15): Advertisement? =
+            withTimeoutOrNull(timeoutSeconds.seconds) {
+                Scanner {
+                    filters {
+                        match { name = Filter.Name.Prefix("Clio_UART [Clio_UART.]") }
+                        match { name = Filter.Name.Prefix("Clio_UART.") }
+                    }
+                }.advertisements.first(matches)
+            }
     }
 
 

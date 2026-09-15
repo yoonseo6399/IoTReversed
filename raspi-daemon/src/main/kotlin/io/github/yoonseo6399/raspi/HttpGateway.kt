@@ -34,8 +34,11 @@ import kotlin.time.Duration.Companion.seconds
 @Serializable
 data class ApiError(val error: String)
 
-class HttpGateway(private val devices: DeviceApi, private val token: String, private val port: Int) {
-    private val server = embeddedServer(CIO, host = "127.0.0.1", port = port) { deviceRoutes(devices, token) }
+class HttpGateway(
+    private val devices: DeviceApi, private val token: String, private val port: Int,
+    private val registration: DeviceRegistration? = null, private val topicRoot: String = "iot-hub"
+) {
+    private val server = embeddedServer(CIO, host = "127.0.0.1", port = port) { deviceRoutes(devices, token, registration, topicRoot) }
 
     /** Starts a loopback-only API for Tailscale Serve; every endpoint requires a bearer token. */
     fun start() {
@@ -49,11 +52,11 @@ class HttpGateway(private val devices: DeviceApi, private val token: String, pri
 
     companion object {
         /** Enables HTTP only when a private token file is explicitly configured. */
-        fun configured(devices: DeviceApi): HttpGateway? {
+        fun configured(devices: DeviceApi, registration: DeviceRegistration? = null, topicRoot: String = "iot-hub"): HttpGateway? {
             val tokenFile = System.getenv("IOT_HTTP_TOKEN_FILE") ?: return null
             val port = System.getenv("IOT_HTTP_PORT")?.toInt() ?: 8080
             require(port in 1024..65535) { "IOT_HTTP_PORT must be between 1024 and 65535" }
-            return HttpGateway(devices, Files.readString(Path.of(tokenFile)).trim(), port)
+            return HttpGateway(devices, Files.readString(Path.of(tokenFile)).trim(), port, registration, topicRoot)
         }
     }
 }
@@ -99,7 +102,7 @@ fun httpFailure(error: Throwable): Pair<HttpStatusCode, String> = when (error) {
 }
 
 /** Exposes stable parameterized routes backed by the current controller registry, never per-device handlers. */
-fun Application.deviceRoutes(devices: DeviceApi, token: String) {
+fun Application.deviceRoutes(devices: DeviceApi, token: String, registration: DeviceRegistration? = null, topicRoot: String = "iot-hub") {
     val json = kotlinx.serialization.json.Json { encodeDefaults = true }
     val commands = StateCommands()
     install(ContentNegotiation) { json(json) }
@@ -120,6 +123,21 @@ fun Application.deviceRoutes(devices: DeviceApi, token: String) {
         }
     }
     routing {
+        if (registration != null) {
+            setOf("/$topicRoot/$REGISTRATION_PATH", "/v1/$REGISTRATION_PATH").forEach { path ->
+                post(path) {
+                    val result = registration.register(call.receive<RegistrationRequest>())
+                    val status = when (result.status) {
+                        "registered" -> HttpStatusCode.Created
+                        "not_found" -> HttpStatusCode.NotFound
+                        "busy", "conflict" -> HttpStatusCode.Conflict
+                        "invalid" -> HttpStatusCode.BadRequest
+                        else -> HttpStatusCode.ServiceUnavailable
+                    }
+                    call.respond(status, result)
+                }
+            }
+        }
         get("/v1/devices") { call.respond(devices.devices()) }
         get("/v1/devices/{id}") { call.respond(devices.status(call.deviceId(), false)) }
         route("/v1/devices/{id}/{type}/{number}/state") {
