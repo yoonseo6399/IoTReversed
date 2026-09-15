@@ -27,6 +27,11 @@ class HttpGatewayTest {
             return entries[id] ?: throw DeviceApiException(404, "Unknown device")
         }
 
+        override suspend fun power(id: String): PowerResponse {
+            status(id, true).module(ModuleType.LAMP, 1)
+            return PowerResponse(id, 55, "0000000000550000", "2026-09-16T00:00:00Z")
+        }
+
         /** Simulates one acknowledged output change without any BLE hardware. */
         override suspend fun set(id: String, type: ModuleType, number: Int, on: Boolean): StateResponse {
             val snapshot = status(id, false)
@@ -49,6 +54,27 @@ class HttpGatewayTest {
         assertEquals(1, api.reads)
         assertEquals(0, api.writes)
         assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
+    }
+
+    @Test fun powerDiagnosticIsAuthenticatedFreshAndReadOnly() = testApplication {
+        val api = Devices()
+        application { deviceRoutes(api, token) }
+        val path = "/v1/devices/my-room/power"
+        assertEquals(HttpStatusCode.Unauthorized, client.get(path).status)
+        assertEquals(0, api.reads)
+        val response = client.get(path) { bearerAuth(token) }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val power = hubJson.decodeFromString<PowerResponse>(response.bodyAsText())
+        assertEquals(55, power.watts)
+        assertEquals("0000000000550000", power.rawPayloadHex)
+        assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
+        assertEquals(1, api.reads)
+        assertEquals(0, api.writes)
+        api.failure = FetchException.Timeout()
+        assertEquals(HttpStatusCode.GatewayTimeout, client.get(path) { bearerAuth(token) }.status)
+        api.failure = null
+        api.entries["my-room"] = api.entries.getValue("my-room").copy(availability = "panicked")
+        assertEquals(HttpStatusCode.Conflict, client.get(path) { bearerAuth(token) }.status)
     }
 
     /** Confirms room additions/removals are reflected without rebuilding the HTTP routing table. */

@@ -52,3 +52,16 @@ No unregistered physical device was available for a live registration test. Regi
 The first Pi test build and npm install failed because the root filesystem was full. APT download caches were cleaned and the user-requested 171 MiB JDK installer was deleted; installed Java and `devices.json` were preserved. A subsequent stale Gradle lock was resolved by stopping the Gradle daemon and rebuilding with a single-use compiler process.
 
 Previous daemon distribution: `/opt/iot-reversed-before-fix-1`. Homebridge configuration was backed up before adding the platform. MQTT credentials are kept only in private Pi configuration files and are not committed. `.idea` changes are excluded from this work.
+
+## APK-derived power and device protocol
+
+See [APK protocol validation](../docs/APK_PROTOCOL.md). Synthetic tests establish
+implementation behavior, not firmware support. The new `/v1/devices/{id}/power`
+read still needs comparison with the user's wall pad (normally 0–55 W, peaks a
+little over 80 W). No deployment or real-device measurement was made in this run.
+
+Local verification: JDK 21, `:raspi-daemon:test :raspi-daemon:installDist --offline`
+passed with 33 tests, zero failures/errors/skips. `git diff --check` passed.
+Android and Kotlin/Native targets were not built; Raspberry Pi BLE and live
+Homebridge validation remain outstanding. Existing unchecked-cast, experimental
+coroutine-test API, and Gradle deprecation warnings remain.

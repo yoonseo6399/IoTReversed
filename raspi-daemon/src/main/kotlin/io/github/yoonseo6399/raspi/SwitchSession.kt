@@ -2,6 +2,8 @@ package io.github.yoonseo6399.raspi
 
 import com.juul.kable.NotConnectedException
 import com.juul.kable.Peripheral
+import io.github.yoonseo6399.communication.ConsumerPowerReading
+import io.github.yoonseo6399.communication.readConsumerPower
 import io.github.yoonseo6399.communication.ConnectionState
 import io.github.yoonseo6399.iotModules.IoTSwitch
 import io.github.yoonseo6399.iotModules.IoTSwitchState
@@ -12,6 +14,7 @@ interface SwitchSession {
     val ready: Boolean
     val failure: StateFlow<Throwable?>
     val modules: List<ModuleState>
+    suspend fun readPower(): ConsumerPowerReading = throw DeviceApiException(501, "Power diagnostic is unavailable")
     suspend fun connect()
     suspend fun refresh()
     suspend fun set(type: ModuleType, number: Int, on: Boolean): Boolean
@@ -26,6 +29,8 @@ class KableSwitchSession(private val device: IoTSwitch) : SwitchSession {
     override val modules: List<ModuleState>
         get() = device.lamps.map { ModuleState("lamp", it.number, it.isOn.value) } +
             device.outlets.map { ModuleState("outlet", it.number, it.powerFlowState.value) }
+
+    override suspend fun readPower(): ConsumerPowerReading = device.connection.readConsumerPower()
 
     /** Preserves the transport failure when initialization cannot complete. */
     override suspend fun connect() {

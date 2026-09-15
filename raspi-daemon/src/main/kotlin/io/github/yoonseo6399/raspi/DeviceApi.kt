@@ -27,7 +27,14 @@ data class StateResponse(
 
 class DeviceApiException(val status: Int, message: String) : Exception(message)
 
+@Serializable
+data class PowerResponse(
+    val id: String, val watts: Int, val rawPayloadHex: String, val observedAt: String,
+    val source: String = "legacy-0x45-bcd"
+)
+
 interface DeviceApi {
+    suspend fun power(id: String): PowerResponse = throw DeviceApiException(501, "Power diagnostic is unavailable")
     suspend fun devices(): List<DeviceSnapshot>
     suspend fun status(id: String, fresh: Boolean): DeviceSnapshot
     suspend fun set(id: String, type: ModuleType, number: Int, on: Boolean): StateResponse

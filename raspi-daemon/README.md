@@ -162,3 +162,11 @@ mosquitto_pub -t iot-hub/registry/devices/remove -m 'bedroom'
 ```
 
 The current registry is retained at `iot-hub/registry/devices`. Adding a device starts its BLE monitor immediately; removing it disconnects its controller and publishes `offline`.
+
+### Consumer-power diagnostic
+
+`GET /v1/devices/{id}/power` performs a fresh, serialized BLE consumer-power read
+and returns `watts`, `rawPayloadHex`, `observedAt`, and `source`. It uses the same
+bearer authentication as the other routes and does not require HomeKit. See
+[APK protocol findings](../docs/APK_PROTOCOL.md) for the curl command, decoding
+evidence, local tests, and hardware validation checklist.

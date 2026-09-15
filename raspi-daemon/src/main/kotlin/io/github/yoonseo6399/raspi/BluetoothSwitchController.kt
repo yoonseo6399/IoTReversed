@@ -95,6 +95,20 @@ class BluetoothSwitchController(
         }
     }
 
+    /** Explicit diagnostic shares the controller lock, panic guard and connection cleanup. */
+    suspend fun readPower(): PowerResponse = stateMutex.withLock {
+        try {
+            requireRunning()
+            val reading = ensureConnected().readPower()
+            PowerResponse(configuration.id, reading.watts,
+                reading.rawPayload.joinToString("") { "%02x".format(it.toInt() and 255) },
+                Instant.now().toString())
+        } catch (error: Throwable) {
+            handleFailure(error)
+            throw error
+        }
+    }
+
     /** Reads a fresh full BLE status sequence without changing any output. */
     suspend fun readStatus() {
         stateMutex.withLock {

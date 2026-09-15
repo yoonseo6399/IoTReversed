@@ -2,6 +2,7 @@ package io.github.yoonseo6399.raspi
 
 import com.juul.kable.NotConnectedException
 import io.github.yoonseo6399.communication.FetchException
+import io.github.yoonseo6399.communication.DeviceStatusError
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.cio.CIO
@@ -96,6 +97,7 @@ fun httpFailure(error: Throwable): Pair<HttpStatusCode, String> = when (error) {
     is FetchException.DuplicationOverflow -> HttpStatusCode.Conflict to "Device is panicked"
     is FetchException.Timeout, is TimeoutCancellationException -> HttpStatusCode.GatewayTimeout to "BLE request timed out"
     is NotConnectedException, is FetchException.Disconnected -> HttpStatusCode.ServiceUnavailable to "Device disconnected"
+    is DeviceStatusError -> HttpStatusCode.ServiceUnavailable to "Device reported a status error"
     is FetchException -> HttpStatusCode.ServiceUnavailable to "Protocol exchange stopped; inspect device"
     is IllegalArgumentException, is SerializationException, is BadRequestException -> HttpStatusCode.BadRequest to "Invalid request"
     else -> HttpStatusCode.ServiceUnavailable to "Device request failed; inspect daemon status"
@@ -138,6 +140,7 @@ fun Application.deviceRoutes(devices: DeviceApi, token: String, registration: De
                 }
             }
         }
+        get("/v1/devices/{id}/power") { call.respond(devices.power(call.deviceId())) }
         get("/v1/devices") { call.respond(devices.devices()) }
         get("/v1/devices/{id}") { call.respond(devices.status(call.deviceId(), false)) }
         route("/v1/devices/{id}/{type}/{number}/state") {
