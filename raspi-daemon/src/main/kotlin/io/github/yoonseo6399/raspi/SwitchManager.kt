@@ -29,6 +29,8 @@ class SwitchManager(
         return controller.snapshot()
     }
 
+    override suspend fun power(id: String): PowerResponse = controller(id).readPower()
+
     /** Shares the existing controller mutex and ACK protocol with MQTT control requests. */
     override suspend fun set(id: String, type: ModuleType, number: Int, on: Boolean): StateResponse =
         controller(id).setState(type, number, on)

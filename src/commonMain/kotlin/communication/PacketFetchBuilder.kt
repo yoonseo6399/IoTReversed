@@ -16,6 +16,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 sealed class FetchException(message: String) : Exception(message) {
+    class InvalidPayload(cmd: Command) : FetchException("Invalid device payload: $cmd")
     class Timeout : FetchException("Fetch timeout")
     class Disconnected : FetchException("Device disconnected")
     class DuplicationOverflow(cmd : Command) : FetchException("Duplication limit reached : $cmd")

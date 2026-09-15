@@ -1,17 +1,8 @@
 package io.github.yoonseo6399.communication
 
 fun parsePowerValue(payload: ByteArray) : Int{
-    val rawHex = payload.take(8).joinToString("") { "%02x".format(it) }
-    println("Rx(CMD_REQ_STS_PWR): $rawHex")
-
-// Power Value 파싱
-    val p1 = (payload[4].toInt() shr 4) and 0x0F
-    val p2 = payload[4].toInt() and 0x0F
-    val p3 = (payload[5].toInt() shr 4) and 0x0F
-    val p4 = payload[5].toInt() and 0x0F
-
-    val strPowerVal = "%x%x%x%x".format(p1, p2, p3, p4)
-    return strPowerVal.toInt()
+    require(payload.size >= 6) { "Truncated consumer-power response" }
+    return decodeBcd(payload[4]) * 100 + decodeBcd(payload[5])
 }
 
 @OptIn(ExperimentalStdlibApi::class)

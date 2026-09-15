@@ -22,6 +22,13 @@ class ReconnectionTest {
         var writeError: Throwable? = null
         var writes = 0
         var refreshes = 0
+        var powerReads = 0
+        var powerError: Throwable? = null
+        override suspend fun readPower(): io.github.yoonseo6399.communication.ConsumerPowerReading {
+            powerReads++
+            powerError?.let { throw it }
+            return io.github.yoonseo6399.communication.ConsumerPowerReading(55, byteArrayOf(0, 0, 0, 0, 0, 0x55))
+        }
         var closed = false
 
         /** Simulates initialization without BLE hardware. */
@@ -57,6 +64,23 @@ class ReconnectionTest {
     private fun controller(scope: CoroutineScope, mqtt: Publisher = Publisher(), factory: suspend () -> SwitchSession) =
         BluetoothSwitchController(SwitchConfiguration("room", "AA:BB:CC:DD:EE:FF"), "test", 1,
             mqtt, scope, BluetoothDiscovery(), factory)
+
+    @Test fun powerReadUsesSessionAndCleansUpFailureWithoutReplay() = runTest {
+        val session = Session()
+        val hub = controller(backgroundScope) { session }
+        val power = hub.readPower()
+        assertEquals(55, power.watts)
+        assertEquals("000000000055", power.rawPayloadHex)
+        assertEquals(1, session.powerReads)
+        assertEquals(0, session.writes)
+        session.powerError = FetchException.DuplicationOverflow(Command.Power.State)
+        assertFailsWith<FetchException.DuplicationOverflow> { hub.readPower() }
+        assertTrue(session.closed)
+        assertEquals("panicked", hub.snapshot().availability)
+        assertFailsWith<DeviceApiException> { hub.readPower() }
+        assertEquals(2, session.powerReads)
+        hub.stop()
+    }
 
     /** A dead cached session is discarded before the next request and availability changes promptly. */
     @Test fun disconnectedSessionIsReplaced() = runTest {
